@@ -11,6 +11,15 @@
 
 Описание модулей — `docs/modules/<модуль>.md`.
 
+## Контракты и хранение
+
+Этап 1 roadmap зафиксировал контракты (утверждены владельцем); код по ним ещё не написан.
+
+- **БД:** один PostgreSQL, две схемы — `core` и `agent`; каждый сервис мигрирует только свою, agent схему `core` не читает. Таблицы и правила — `docs/database.md`.
+- **MCP** (только инструменты для LLM, напоминания) — `docs/api/mcp.md`.
+- **Internal REST** (пользователи, инвайты, usage, квоты, кнопки уведомлений, поиск по reply) — `docs/api/rest.md`.
+- **Eval-набор LLM** (`agent/eval/`, не входит в `./gradlew build`) — `docs/eval.md`.
+
 ## Сборка
 
 - Gradle Kotlin DSL, JVM 21 (toolchain; JDK скачивается через foojay при отсутствии).

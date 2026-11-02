@@ -1,0 +1,29 @@
+{
+  "context": {
+    "now_local": "2026-11-02T10:00",
+    "timezone": "Europe/Moscow",
+    "name": "Аня",
+    "gender": "female"
+  },
+  "fixtures": {
+    "empty": {
+      "reminders": []
+    },
+    "base": {
+      "reminders": [
+        {"id": 11, "text": "Позвонить маме", "status": "active", "recurrence": {"freq": "weekly", "by_weekday": ["SU"], "time": "18:00", "start_date": "2026-11-01"}},
+        {"id": 12, "text": "Выпить таблетки", "status": "active", "recurrence": {"freq": "daily", "time": "09:00", "start_date": "2026-10-01"}},
+        {"id": 13, "text": "Оплатить интернет", "status": "active", "recurrence": {"freq": "monthly", "by_month_day": [10], "time": "12:00", "start_date": "2026-10-10"}},
+        {"id": 14, "text": "Забрать посылку", "status": "active", "when": {"date": "2026-11-03", "time": "15:00"}},
+        {"id": 15, "text": "Спортзал", "status": "active", "recurrence": {"freq": "weekly", "by_weekday": ["MO", "WE", "FR"], "time": "19:00", "start_date": "2026-10-05"}},
+        {"id": 16, "text": "Встреча с Петей", "status": "active", "when": {"date": "2026-11-05", "time": "13:00"}}
+      ]
+    },
+    "base_paused": {
+      "extends": "base",
+      "override": {
+        "15": {"status": "paused"}
+      }
+    }
+  }
+}
