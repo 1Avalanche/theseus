@@ -18,8 +18,10 @@ Theseus — платформа (репозиторий, сервисы, паке
 **Всё, что можно сделать детерминированно, делается кодом.** LLM — только понимание языка, извлечение сущностей, уточнения, семантическое сопоставление, диалог. Даты, таймзоны, RRULE, валидация, дубли-кандидаты, рендер списков, онбординг, кнопки, права — код.
 
 ## Стек
-<!-- TODO: утвердить. Ниже — предложение, не решение. -->
 - Kotlin, JVM 21, Gradle Kotlin DSL + version catalog (`gradle/libs.versions.toml`), convention plugins в `build-logic/`.
+- Ktor (сервер и клиент), kotlinx.serialization, Exposed DSL + Flyway + HikariCP, MCP Kotlin SDK, ktgbotapi, lib-recur.
+- DI — ручной, через конструкторы. Тесты — JUnit 5 + MockK + Testcontainers. Качество — detekt + ktlint.
+- Обоснования — `docs/DECISIONS.md`, раздел 1. Новые зависимости — только по согласованию.
 
 ## Команды
 <!-- TODO: заполнить после создания проекта -->
