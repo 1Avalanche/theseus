@@ -30,6 +30,8 @@
 2. `include(":<модуль>")` в `settings.gradle.kts`.
 3. `README.md` модуля и `docs/modules/<модуль>.md`.
 
+Пошаговая процедура для Claude — скилл `.claude/skills/add-module/`.
+
 ## Качество кода
 
 - **ktlint** (плагин `org.jlleitschuh.gradle.ktlint`) — стиль; входит в `check`. Автоисправление: `./gradlew ktlintFormat`.
