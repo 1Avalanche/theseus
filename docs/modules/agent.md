@@ -1,8 +1,8 @@
 # Модуль agent
 
-Telegram-бот (long polling) и LLM-пайплайн через OpenRouter. Архитектура — `docs/architecture.md` и `docs/DECISIONS.md` (разделы 2, 6, 8).
+Telegram-бот (long polling) и LLM-пайплайн через OpenRouter. Архитектура — `docs/architecture.md`, решения — `docs/DECISIONS.md` (разделы 2, 6, 8, 9).
 
-**Статус:** модуль в Gradle ещё не создан. Заранее лежат только ресурсы промптов.
+**Статус:** каркас. Gradle-модуль `:agent`, плагин `theseus.application`, точка входа `theseus.agent.MainKt` — заглушка.
 
 ## Ресурсы
 

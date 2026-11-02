@@ -20,14 +20,17 @@ Theseus — платформа (репозиторий, сервисы, паке
 ## Стек
 - Kotlin, JVM 21, Gradle Kotlin DSL + version catalog (`gradle/libs.versions.toml`), convention plugins в `build-logic/`.
 - Ktor (сервер и клиент), kotlinx.serialization, Exposed DSL + Flyway + HikariCP, MCP Kotlin SDK, ktgbotapi, lib-recur.
-- DI — ручной, через конструкторы. Тесты — JUnit 5 + MockK + Testcontainers. Качество — detekt + ktlint.
-- Обоснования — `docs/DECISIONS.md`, раздел 1. Новые зависимости — только по согласованию.
+- DI — ручной, через конструкторы. Тесты — JUnit 6 + MockK + Testcontainers. Качество — detekt + ktlint.
+- Модули: `:core`, `:agent`; пакеты `theseus.<модуль>`. Устройство сборки — `docs/architecture.md`.
+- Обоснования — `docs/DECISIONS.md`, раздел 1. Новые зависимости — только по согласованию, версии — только в `gradle/libs.versions.toml`.
 
 ## Команды
-<!-- TODO: заполнить после создания проекта -->
-- Сборка + тесты: `./gradlew build`
-- Только юнит-тесты модуля: `./gradlew :<module>:test`
-- Локальный запуск: `docker compose up -d`
+- Сборка + тесты + ktlint + detekt: `./gradlew build`
+- Юнит-тесты модуля: `./gradlew :<module>:test`
+- Автоисправление стиля: `./gradlew ktlintFormat`
+- Тесты хуков Claude: `python3 -m unittest discover -s .claude/hooks/tests`
+<!-- TODO: локальный запуск (docker compose) — когда появится compose-файл -->
+
 
 ## Правила работы
 - Тематические правила — в `.claude/rules/`, скиллы — в `.claude/skills/`. Соблюдай их.

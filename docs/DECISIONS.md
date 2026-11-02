@@ -30,10 +30,13 @@
 | Повторы | lib-recur | корректный RRULE (RFC 5545) |
 | Сериализация | kotlinx.serialization | нативно для Ktor и Kotlin |
 | DI | ручной (конструкторы) | для двух сервисов контейнер не нужен |
-| Тесты | JUnit 5 + MockK + Testcontainers | юнит — без инфраструктуры, интеграция — реальный Postgres |
+| Тесты | JUnit + MockK + Testcontainers | юнит — без инфраструктуры, интеграция — реальный Postgres |
 | Качество кода | detekt + ktlint | |
 
-Версии фиксируются в version catalog при создании каркаса — по актуальным релизам на тот момент.
+Каркас (2026-11-02): версии — актуальные релизы на дату создания, в `gradle/libs.versions.toml`.
+- Kotlin 2.4.21 (последний стабильный; 2.5 в бете). JUnit 6 (вышел; BOM). Testcontainers 2.x (артефакт `testcontainers-postgresql`).
+- detekt — `2.0.0-alpha`: стабильная 1.23.x не поддерживает Kotlin 2.4. Перейти на стабильный 2.x при выходе.
+- Модули `:core`, `:agent`; пакеты `theseus.<модуль>`, group `theseus`. Разделение core на domain/application/adapters — пока пакетами; выносить в Gradle-модули, если границы начнут нарушаться.
 
 ## 2. Архитектура
 - Два сервиса:
