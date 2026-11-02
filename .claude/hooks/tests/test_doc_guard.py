@@ -39,6 +39,13 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual({"docs/claude-hooks.md"}, result[".claude/hooks/bash_guard.py"])
         self.assertIn("docs/persona.md", result["agent/src/main/resources/persona/card.md"])
 
+    def test_build_logic_and_root_have_no_module_doc(self):
+        result = doc_guard.classify(["build-logic/src/main/kotlin/theseus.kotlin-jvm.gradle.kts",
+                                     "src/main/kotlin/Main.kt"])
+        self.assertEqual({"docs/architecture.md"},
+                         result["build-logic/src/main/kotlin/theseus.kotlin-jvm.gradle.kts"])
+        self.assertNotIn("src/main/kotlin/Main.kt", result)
+
     def test_ignored_paths(self):
         self.assertEqual({}, doc_guard.classify([
             "core/src/test/kotlin/ATest.kt", ".claude/hooks/tests/test_x.py", "docs/api/mcp.md",

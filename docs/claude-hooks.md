@@ -58,7 +58,7 @@
 | `settings.gradle.kts`, `libs.versions.toml`, `build-logic/` | `docs/architecture.md` |
 | `.claude/hooks/**`, `.claude/settings.json` | `docs/claude-hooks.md` |
 
-Не требуют документации: тесты, сами документы, README, `CLAUDE.md`, `.claude/rules|agents|skills`, `.idea/`.
+Не требуют документации: тесты, сами документы, README, `CLAUDE.md`, `.claude/rules|agents|skills`, `.idea/`. У корня проекта и `build-logic/` нет своего `docs/modules/<модуль>.md` (`NO_MODULE_DOCS`): сборка описана в `docs/architecture.md`.
 
 Если есть такие изменения, хук не даёт завершить ход и просит агента: вызвать субагента **docs-writer**, самому дописать `docs/DECISIONS.md`, если было архитектурное решение, или сказать владельцу, что документация уже актуальна.
 

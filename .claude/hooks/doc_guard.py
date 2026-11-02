@@ -48,6 +48,9 @@ RULES = [
 ]
 COMPILED_RULES = [(re.compile(p), docs) for p, docs in RULES]
 
+# «Модули» без собственного docs/modules/<модуль>.md: корень проекта и сборка (описана в architecture.md).
+NO_MODULE_DOCS = {"root", "build-logic"}
+
 STATE_FILE = "claude-doc-guard.json"
 
 
@@ -66,9 +69,11 @@ def classify(paths):
         if IGNORED.search(path):
             continue
         docs = set()
+        module = module_of(path)
         for pattern, targets in COMPILED_RULES:
             if pattern.search(path):
-                docs.update(t.format(module=module_of(path)) for t in targets)
+                docs.update(t.format(module=module) for t in targets
+                            if not ("{module}" in t and module in NO_MODULE_DOCS))
         if docs:
             result[path] = docs
     return result
