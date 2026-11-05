@@ -1,0 +1,32 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 '/Users/anastasiyaa/IdeaProjects/theseus/.codex/hooks/bash_guard.py'",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 '/Users/anastasiyaa/IdeaProjects/theseus/.codex/hooks/doc_guard.py'",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "python3 '/Users/anastasiyaa/IdeaProjects/theseus/.codex/hooks/test_guard.py'",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
+}
