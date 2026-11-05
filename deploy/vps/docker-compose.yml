@@ -1,0 +1,75 @@
+# Стенд Theseus (prod или test) — один файл, два compose-проекта (DECISIONS.md §12).
+# Запускает deploy.sh:
+#   docker compose -p theseus-<стенд> -f docker-compose.yml \
+#     --env-file <стенд>/stand.env --env-file <стенд>/image.env up -d
+# PostgreSQL — отдельный проект theseus-infra (сеть theseus-db должна существовать).
+# Каждому контейнеру — только его переменные: агент не видит пароль БД core и наоборот.
+
+services:
+  core:
+    image: ${THESEUS_IMAGE_REGISTRY:?}/theseus-core:${THESEUS_IMAGE_TAG:?}
+    container_name: theseus-${THESEUS_STAND:?}-core
+    restart: unless-stopped
+    environment:
+      JAVA_OPTS: -Xmx${THESEUS_CORE_HEAP:-256m} ${THESEUS_JAVA_OPTS_COMMON:--XX:+UseSerialGC -XX:MaxMetaspaceSize=128m -Xss512k -XX:+ExitOnOutOfMemoryError -Duser.timezone=UTC}
+      THESEUS_HTTP_PORT: "8080"
+      THESEUS_DB_URL: jdbc:postgresql://theseus-postgres:5432/theseus_${THESEUS_STAND}
+      THESEUS_DB_USER: theseus_${THESEUS_STAND}_core
+      THESEUS_DB_PASSWORD: ${THESEUS_CORE_DB_PASSWORD:?}
+      THESEUS_SERVICE_TOKEN: ${THESEUS_SERVICE_TOKEN:?}
+      THESEUS_TELEGRAM_BOT_TOKEN: ${THESEUS_TELEGRAM_BOT_TOKEN:?}
+      THESEUS_ADMIN_CHAT_ID: ${THESEUS_ADMIN_CHAT_ID:?}
+      THESEUS_ADMIN_NAME: ${THESEUS_ADMIN_NAME:?}
+      THESEUS_ADMIN_GENDER: ${THESEUS_ADMIN_GENDER:-unspecified}
+      THESEUS_ADMIN_TIMEZONE: ${THESEUS_ADMIN_TIMEZONE:?}
+      THESEUS_DEFAULT_TIME: ${THESEUS_DEFAULT_TIME:-09:00}
+      THESEUS_LOG_LEVEL: ${THESEUS_LOG_LEVEL:-INFO}
+    mem_limit: ${THESEUS_CORE_MEM_LIMIT:-400m}
+    networks:
+      - stand
+      - db
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  agent:
+    image: ${THESEUS_IMAGE_REGISTRY}/theseus-agent:${THESEUS_IMAGE_TAG}
+    container_name: theseus-${THESEUS_STAND}-agent
+    restart: unless-stopped
+    depends_on:
+      core:
+        condition: service_healthy
+    environment:
+      JAVA_OPTS: -Xmx${THESEUS_AGENT_HEAP:-256m} ${THESEUS_JAVA_OPTS_COMMON:--XX:+UseSerialGC -XX:MaxMetaspaceSize=128m -Xss512k -XX:+ExitOnOutOfMemoryError -Duser.timezone=UTC}
+      THESEUS_CORE_URL: http://theseus-${THESEUS_STAND}-core:8080
+      THESEUS_SERVICE_TOKEN: ${THESEUS_SERVICE_TOKEN}
+      THESEUS_TELEGRAM_BOT_TOKEN: ${THESEUS_TELEGRAM_BOT_TOKEN}
+      THESEUS_OPENROUTER_API_KEY: ${THESEUS_OPENROUTER_API_KEY:?}
+      THESEUS_LLM_MAIN_MODELS: ${THESEUS_LLM_MAIN_MODELS:?}
+      THESEUS_HEALTH_FILE: /tmp/theseus-agent.health
+      THESEUS_LOG_LEVEL: ${THESEUS_LOG_LEVEL:-INFO}
+    mem_limit: ${THESEUS_AGENT_MEM_LIMIT:-400m}
+    networks:
+      - stand
+    healthcheck:
+      # Пульс агента (getMe раз в 30 с) обновляет файл; старше 120 с — нездоров.
+      test: ["CMD-SHELL", "test -f /tmp/theseus-agent.health && test $$(( $$(date +%s) - $$(stat -c %Y /tmp/theseus-agent.health) )) -lt 120"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging: *logging
+
+networks:
+  stand: {}
+  db:
+    name: theseus-db
+    external: true

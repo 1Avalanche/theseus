@@ -1,0 +1,9 @@
+# Отклонения от конфига detekt по умолчанию (buildUponDefaultConfig = true).
+
+style:
+  # Совпадает с лимитом ktlint (ktlint_official — 140), иначе инструменты спорят.
+  MaxLineLength:
+    maxLineLength: 140
+  # Ранние return-проверки («guard clauses») делают код читаемее, не считаем их.
+  ReturnCount:
+    excludeGuardClauses: true

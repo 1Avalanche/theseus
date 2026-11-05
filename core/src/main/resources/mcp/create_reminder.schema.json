@@ -1,0 +1,42 @@
+{
+  "properties": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "description": "Что напомнить — коротко, словами пользователя, без слов «напомни», даты и времени."
+    },
+    "when": {
+      "type": "object",
+      "description": "Когда напомнить — как сказал пользователь. Нужно date и/или time, либо after.",
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Дата YYYY-MM-DD. «Завтра», «в пятницу», «15-го» переводи в дату по текущей дате из контекста."
+        },
+        "time": {
+          "type": "string",
+          "pattern": "^\\d{2}:\\d{2}$",
+          "description": "Время суток HH:MM. Без date — ближайшее такое время в будущем."
+        },
+        "after": {
+          "type": "object",
+          "description": "Сдвиг от текущего момента: «через 5 минут», «через 2 часа», «через неделю». С hours/minutes — без date и time.",
+          "additionalProperties": false,
+          "properties": {
+            "days": {"type": "integer", "minimum": 0},
+            "hours": {"type": "integer", "minimum": 0},
+            "minutes": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "force": {
+      "type": "boolean",
+      "description": "Создать, даже если найдены похожие напоминания. Ставь только после подтверждения пользователя."
+    }
+  },
+  "required": ["text", "when"]
+}

@@ -1,0 +1,53 @@
+# Общий PostgreSQL для стендов prod и test (DECISIONS.md §12). Поднимается один раз вручную:
+#   docker compose -p theseus-infra -f infra/docker-compose.yml --env-file infra/infra.env up -d
+# Порт наружу не публикуется: стенды подключаются через сеть theseus-db.
+name: theseus-infra
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: theseus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задай POSTGRES_PASSWORD в infra.env}
+      THESEUS_PROD_CORE_DB_PASSWORD: ${THESEUS_PROD_CORE_DB_PASSWORD:?}
+      THESEUS_PROD_AGENT_DB_PASSWORD: ${THESEUS_PROD_AGENT_DB_PASSWORD:?}
+      THESEUS_TEST_CORE_DB_PASSWORD: ${THESEUS_TEST_CORE_DB_PASSWORD:?}
+      THESEUS_TEST_AGENT_DB_PASSWORD: ${THESEUS_TEST_AGENT_DB_PASSWORD:?}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=40
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - effective_cache_size=256MB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    mem_limit: 320m
+    shm_size: 128m
+    networks:
+      - db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  db:
+    name: theseus-db
+
+volumes:
+  pgdata:
+    name: theseus-pgdata

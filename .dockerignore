@@ -1,0 +1,4 @@
+# Контекст сборки образов — только дистрибутивы модулей (deploy/Dockerfile).
+**
+!core/build/install/
+!agent/build/install/

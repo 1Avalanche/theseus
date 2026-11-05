@@ -6,19 +6,29 @@
 
 | Сервис | Gradle-модуль | Назначение | Статус |
 |---|---|---|---|
-| core | `:core` | домен, PostgreSQL, планировщик, уведомления; наружу MCP (инструменты LLM) и internal REST | заглушка |
-| agent | `:agent` | Telegram-бот, LLM-пайплайн через OpenRouter, история диалога | заглушка, есть ресурсы промптов |
+| core | `:core` | домен, PostgreSQL, планировщик, уведомления; наружу MCP (инструменты LLM) и internal REST | этап 2: работает — `create_reminder` (разовые), планировщик, уведомления |
+| agent | `:agent` | Telegram-бот, LLM-пайплайн через OpenRouter, история диалога | этап 2: работает — long polling, LLM-пайплайн без истории и БД |
 
 Описание модулей — `docs/modules/<модуль>.md`.
 
 ## Контракты и хранение
 
-Этап 1 roadmap зафиксировал контракты (утверждены владельцем); код по ним ещё не написан.
+Контракты зафиксированы на этапе 1 (утверждены владельцем). На этапе 2 реализована их часть — `create_reminder` для разовых, `GET /health`, `GET /internal/v1/users/by-chat/{chat_id}`, таблицы `users`, `reminders`, `reminder_deliveries`; остальное — по этапам roadmap. Упрощения этапа 2 — `docs/DECISIONS.md`, §13.
 
 - **БД:** один PostgreSQL, две схемы — `core` и `agent`; каждый сервис мигрирует только свою, agent схему `core` не читает. Таблицы и правила — `docs/database.md`.
 - **MCP** (только инструменты для LLM, напоминания) — `docs/api/mcp.md`.
 - **Internal REST** (пользователи, инвайты, usage, квоты, кнопки уведомлений, поиск по reply) — `docs/api/rest.md`.
 - **Eval-набор LLM** (`agent/eval/`, не входит в `./gradlew build`) — `docs/eval.md`.
+
+## Поток: «напомни через 5 минут»
+
+1. Telegram → **agent** (long polling). Сообщения личных чатов; одного chatId — строго по очереди.
+2. agent спрашивает core по REST (`GET /internal/v1/users/by-chat/{chat_id}`). Незнакомый или не `ACTIVE` chatId — тишина, LLM не вызывается.
+3. agent строит системный промпт (персона → факты → правила → контекст с текущим локальным временем пользователя) и шлёт запрос в **OpenRouter** вместе с инструментами, полученными из MCP core (`tools/list`).
+4. Модель вызывает `create_reminder` с `when.after = {minutes: 5}`. agent передаёт вызов в **MCP core** (`POST /mcp`, Bearer-токен), `userId` — в `_meta["theseus/user_id"]`.
+5. core в таймзоне пользователя считает момент срабатывания (`WhenResolver`) и сохраняет напоминание в **PostgreSQL** (`next_fire_at`, UTC).
+6. agent отвечает пользователю шаблоном по результату инструмента («Поставил: …»). Ошибку инструмента получает модель (не больше 2 раундов инструментов на сообщение).
+7. **Планировщик** core раз в 30 с выбирает наступившие напоминания, отправляет уведомление через `Notifier` → **Telegram**, в одной транзакции пишет `reminder_deliveries` и переводит напоминание в `DONE`.
 
 ## Сборка
 
@@ -30,6 +40,7 @@
 |---|---|
 | `theseus.kotlin-jvm` | Kotlin JVM 21, JUnit (BOM) + MockK для тестов, ktlint, detekt |
 | `theseus.application` | `theseus.kotlin-jvm` + плагин `application` (запускаемый сервис) |
+| `theseus.serialization` | плагин компилятора kotlinx.serialization (виден модулям только через build-logic) |
 
 - Пакеты: `theseus.<модуль>…`, group `theseus`.
 - Включены Gradle build cache, configuration cache и параллельная сборка (`gradle.properties`).
@@ -44,4 +55,14 @@
 ## Качество кода
 
 - **ktlint** (плагин `org.jlleitschuh.gradle.ktlint`) — стиль; входит в `check`. Автоисправление: `./gradlew ktlintFormat`.
-- **detekt** `2.0.0-alpha` (плагин `dev.detekt`) — статический анализ, конфиг по умолчанию; входит в `check`. Стабильная ветка 1.23 не поддерживает Kotlin 2.4 — перейти на стабильный 2.x, когда выйдет.
+- **detekt** `2.0.0-alpha` (плагин `dev.detekt`) — статический анализ; свой `config/detekt/detekt.yml` поверх умолчаний (`MaxLineLength` 140 как у ktlint, `ReturnCount` не считает guard clauses), подключён в `theseus.kotlin-jvm`; входит в `check`. Стабильная ветка 1.23 не поддерживает Kotlin 2.4 — перейти на стабильный 2.x, когда выйдет.
+
+## Тесты
+
+- Юнит-тесты (`src/test`): без инфраструктуры, фиксированный `Clock`, фейки портов, LLM не вызывается. `./gradlew :<module>:test`.
+- Интеграционные (`:core`, набор `integrationTest`, `core/src/integrationTest`): миграции и репозитории на реальном PostgreSQL 17 (Testcontainers). Входят в `check`/`build`; без Docker пропускаются. Отдельно: `./gradlew :core:integrationTest`.
+- Eval-набор LLM — не входит в сборку, `docs/eval.md`.
+
+## Деплой
+
+Два стенда (prod, test) на одном VPS, общий PostgreSQL; образы core и agent (`deploy/Dockerfile`) — в ghcr.io с тегом SHA коммита; деплой — вручную через GitHub Actions. CI (`.github/workflows/ci.yml`) на push и PR только проверяет. Настройка VPS, переменные окружения, откат — `docs/operations.md`.

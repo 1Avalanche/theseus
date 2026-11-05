@@ -29,6 +29,7 @@ Theseus — платформа (репозиторий, сервисы, паке
 ## Команды
 - Сборка + тесты + ktlint + detekt: `./gradlew build`
 - Юнит-тесты модуля: `./gradlew :<module>:test`
+- Интеграционные тесты core (Testcontainers, нужен Docker): `./gradlew :core:integrationTest`
 - Автоисправление стиля: `./gradlew ktlintFormat`
 - Тесты хуков Claude: `python3 -m unittest discover -s .claude/hooks/tests`
 <!-- TODO: локальный запуск (docker compose) — когда появится compose-файл -->
