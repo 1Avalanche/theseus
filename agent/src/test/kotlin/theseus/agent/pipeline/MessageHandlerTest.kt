@@ -135,6 +135,71 @@ class MessageHandlerTest {
         }
 
     @Test
+    fun `start greets known user without llm or reminder creation`() =
+        runTest {
+            val core = FakeCore(mapOf(4242L to owner))
+            val llm = FakeLlm()
+
+            assertEquals(texts.get("reply.welcome_named", mapOf("name" to "Аня")), handler(core, llm).handle(4242, "/start"))
+            assertTrue(llm.requests.isEmpty())
+            assertTrue(core.calls.isEmpty())
+        }
+
+    @Test
+    fun `who are you is answered by local dialogue template without core mutation`() =
+        runTest {
+            val core = FakeCore(mapOf(4242L to owner))
+            val llm =
+                FakeLlm(
+                    ChatMessage(
+                        Role.ASSISTANT,
+                        null,
+                        toolCalls = listOf(ToolCall("dialogue_1", "assistant_reply", """{"topic":"about"}""")),
+                    ),
+                )
+
+            assertEquals(texts.get("reply.about"), handler(core, llm).handle(4242, "кто ты"))
+            assertTrue(core.calls.isEmpty())
+            assertEquals(1, llm.requests.size)
+        }
+
+    @Test
+    fun `start and help do not bypass user access checks`() =
+        runTest {
+            for (users in listOf(emptyMap(), mapOf(4242L to owner.copy(status = "revoked")))) {
+                val core = FakeCore(users)
+                val llm = FakeLlm()
+                val handler = handler(core, llm)
+
+                assertNull(handler.handle(4242, "/start"))
+                assertNull(handler.handle(4242, "/help"))
+                assertTrue(llm.requests.isEmpty())
+                assertTrue(core.calls.isEmpty())
+            }
+        }
+
+    @Test
+    fun `invented dialogue capabilities and success claims are not displayed or forwarded to core`() =
+        runTest {
+            val core = FakeCore(mapOf(4242L to owner))
+            val llm =
+                FakeLlm(
+                    ChatMessage(
+                        Role.ASSISTANT,
+                        null,
+                        toolCalls =
+                            listOf(
+                                ToolCall("dialogue_1", "assistant_reply", """{"topic":"about","text":"Я создал календарь"}"""),
+                            ),
+                    ),
+                    ChatMessage(Role.ASSISTANT, "Готово, всё создано."),
+                )
+
+            assertEquals(texts.get("reply.unconfirmed"), handler(core, llm).handle(4242, "кто ты"))
+            assertTrue(core.calls.isEmpty())
+        }
+
+    @Test
     fun `system prompt and tools from core are sent to llm`() =
         runTest {
             val llm = FakeLlm(ChatMessage(Role.ASSISTANT, "Привет."))
@@ -149,7 +214,7 @@ class MessageHandlerTest {
                     .content!!
                     .contains("Сейчас 2026-11-02 10:15"),
             )
-            assertEquals(listOf("create_reminder"), request.tools.map { it.name })
+            assertEquals(listOf("create_reminder", "assistant_reply"), request.tools.map { it.name })
         }
 
     @Test

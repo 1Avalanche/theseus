@@ -25,7 +25,7 @@ import java.time.ZoneId
  * Обработка одного входящего текстового сообщения (v1: один агент с инструментами).
  *
  * 1. Пользователь ищется в core **до** LLM: незнакомый или неактивный chatId — без ответа и без вызова модели.
- * 2. Модель получает системный промпт и инструменты из MCP core.
+ * 2. /start и /help отвечают шаблонами без LLM. Остальные запросы получают инструменты core и локального диалога.
  * 3. Вызовы инструментов уходят в core с `userId` в `_meta`. Успех — ответ кодом по шаблону;
  *    ошибка или нераспознанный результат — результат возвращается модели для исправления аргументов.
  *    Текст модели не подтверждает выполнение: без результата core ответ формируется по безопасному шаблону.
@@ -43,6 +43,7 @@ class MessageHandler(
 ) {
     private val log = LoggerFactory.getLogger(MessageHandler::class.java)
     private val toolsLock = Mutex()
+    private val dialogue = DialogReplies(texts)
     private var tools: List<ToolDefinition>? = null
 
     /** Текст ответа или `null`, если отвечать не нужно. */
@@ -56,7 +57,7 @@ class MessageHandler(
             return null
         }
         return try {
-            converse(user, text)
+            dialogue.commandReply(text, user) ?: converse(user, text)
         } catch (e: CancellationException) {
             throw e
         } catch (
@@ -103,13 +104,17 @@ class MessageHandler(
         val results = calls.map { call -> call to execute(user, call) }
         val rendered =
             results.map { (call, result) ->
-                if (result.isError) null else renderer.render(call.name, result.text, zone, now)
+                when {
+                    result.isError -> null
+                    call.name == DialogReplies.TOOL_NAME -> result.text
+                    else -> renderer.render(call.name, result.text, zone, now)
+                }
             }
-        val confirmed = rendered.filterNotNull()
-        log.info("Обработаны инструменты, user_id={}, calls={}, confirmed={}", user.id, calls.size, confirmed.size)
-        return if (confirmed.isNotEmpty()) {
+        val renderedReplies = rendered.filterNotNull()
+        log.info("Обработаны инструменты, user_id={}, calls={}, rendered={}", user.id, calls.size, renderedReplies.size)
+        return if (renderedReplies.isNotEmpty()) {
             // Не терять уже выполненные действия и не предлагать модели повторить их при частичном успехе.
-            val replies = if (confirmed.size == results.size) confirmed else confirmed + texts.get("reply.unconfirmed")
+            val replies = if (renderedReplies.size == results.size) renderedReplies else renderedReplies + texts.get("reply.unconfirmed")
             replies.joinToString("\n")
         } else {
             results.forEach { (call, result) -> messages += ChatMessage(Role.TOOL, result.text, toolCallId = call.id) }
@@ -124,12 +129,13 @@ class MessageHandler(
         val arguments =
             runCatching { Json.parseToJsonElement(call.argumentsJson.ifBlank { "{}" }).jsonObject }.getOrNull()
                 ?: return ToolResult(texts.get("tool.invalid_json"), isError = true)
-        return core.callTool(user.id, call.name, arguments)
+        return if (call.name == DialogReplies.TOOL_NAME) dialogue.execute(user, arguments) else core.callTool(user.id, call.name, arguments)
     }
 
     private suspend fun tools(): List<ToolDefinition> =
         toolsLock.withLock {
-            tools ?: core.listTools().map { ToolDefinition(it.name, it.description, it.inputSchema) }.also { tools = it }
+            tools ?: (core.listTools().map { ToolDefinition(it.name, it.description, it.inputSchema) } + dialogue.definition)
+                .also { tools = it }
         }
 
     companion object {

@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "topic": {
+      "type": "string",
+      "enum": ["greeting", "about", "capabilities", "clarify", "unsupported"],
+      "description": "Тема готового ответа: приветствие; кто ты; что умеешь; уточни запрос целиком; задача пока не поддерживается."
+    }
+  },
+  "required": ["topic"],
+  "additionalProperties": false
+}

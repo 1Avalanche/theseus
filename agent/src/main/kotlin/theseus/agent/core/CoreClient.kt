@@ -24,7 +24,7 @@ data class ToolSpec(
     val inputSchema: JsonObject,
 )
 
-/** Результат инструмента: JSON-текст из core и признак ошибки. */
+/** Результат инструмента: JSON core либо локальный ресурсный текст и признак ошибки. */
 data class ToolResult(
     val text: String,
     val isError: Boolean,
