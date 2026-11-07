@@ -38,6 +38,7 @@ class MessageHandlerTest {
         var result: ToolResult = ToolResult("{}", isError = false),
     ) : CoreClient {
         val calls = mutableListOf<Triple<Long, String, JsonObject>>()
+        val results = ArrayDeque<ToolResult>()
 
         override suspend fun findUserByChat(chatId: Long) = users[chatId]
 
@@ -49,7 +50,7 @@ class MessageHandlerTest {
             arguments: JsonObject,
         ): ToolResult {
             calls += Triple(userId, name, arguments)
-            return result
+            return results.removeFirstOrNull() ?: result
         }
     }
 
@@ -111,6 +112,29 @@ class MessageHandlerTest {
         }
 
     @Test
+    fun `model confirmation without tool call is not presented as success`() =
+        runTest {
+            val core = FakeCore(mapOf(4242L to owner))
+            val llm = FakeLlm(ChatMessage(Role.ASSISTANT, "Напоминание на 14:15: проверить стенд"))
+
+            val reply = handler(core, llm).handle(4242, "Напомни через 2 минуты проверить стенд")
+
+            assertEquals(texts.get("reply.not_created"), reply)
+            assertTrue(core.calls.isEmpty())
+            assertEquals(1, llm.requests.size)
+        }
+
+    @Test
+    fun `model confirmation after tool error is not presented as success`() =
+        runTest {
+            val core = FakeCore(mapOf(4242L to owner), ToolResult("{}", isError = true))
+            val llm = FakeLlm(toolCall("{}"), ChatMessage(Role.ASSISTANT, "Готово, поставил напоминание."))
+
+            assertEquals(texts.get("reply.unconfirmed"), handler(core, llm).handle(4242, "напомни"))
+            assertEquals(1, core.calls.size)
+        }
+
+    @Test
     fun `system prompt and tools from core are sent to llm`() =
         runTest {
             val llm = FakeLlm(ChatMessage(Role.ASSISTANT, "Привет."))
@@ -129,7 +153,7 @@ class MessageHandlerTest {
         }
 
     @Test
-    fun `tool error goes back to llm which phrases the answer`() =
+    fun `tool error goes back to llm but text alone does not confirm creation`() =
         runTest {
             val error = """{"error":{"code":"time_in_past","message":"Время уже прошло"}}"""
             val core = FakeCore(mapOf(4242L to owner), ToolResult(error, isError = true))
@@ -138,11 +162,47 @@ class MessageHandlerTest {
 
             val reply = handler(core, llm).handle(4242, "напомни в 9 про X")
 
-            assertEquals("Это время уже прошло. Завтра?", reply)
+            assertEquals(texts.get("reply.unconfirmed"), reply)
             val second = llm.requests[1].messages
             assertEquals(listOf(Role.SYSTEM, Role.USER, Role.ASSISTANT, Role.TOOL), second.map { it.role })
             assertEquals(error, second.last().content)
             assertEquals("call_1", second.last().toolCallId)
+        }
+
+    @Test
+    fun `partial batch preserves confirmed creation without asking llm to repeat it`() =
+        runTest {
+            val core = FakeCore(mapOf(4242L to owner))
+            core.results.addAll(listOf(ToolResult(createdJson, isError = false), ToolResult("{}", isError = true)))
+            val llm =
+                FakeLlm(
+                    ChatMessage(
+                        Role.ASSISTANT,
+                        null,
+                        toolCalls =
+                            listOf(
+                                ToolCall("call_1", "create_reminder", "{}"),
+                                ToolCall("call_2", "create_reminder", "{}"),
+                            ),
+                    ),
+                )
+
+            val reply = handler(core, llm).handle(4242, "создай два напоминания")
+
+            assertEquals("Поставил: «Выключить духовку» — сегодня в 10:20.\n" + texts.get("reply.unconfirmed"), reply)
+            assertEquals(2, core.calls.size)
+            assertEquals(1, llm.requests.size)
+        }
+
+    @Test
+    fun `model can correct tool arguments and success still comes from core`() =
+        runTest {
+            val core = FakeCore(mapOf(4242L to owner))
+            core.results.addAll(listOf(ToolResult("{}", isError = true), ToolResult(createdJson, isError = false)))
+            val llm = FakeLlm(toolCall("{}"), toolCall("""{"text":"Выключить духовку","when":{"after":{"minutes":5}}}"""))
+
+            assertEquals("Поставил: «Выключить духовку» — сегодня в 10:20.", handler(core, llm).handle(4242, "напомни"))
+            assertEquals(2, core.calls.size)
         }
 
     @Test

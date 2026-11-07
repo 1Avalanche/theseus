@@ -98,6 +98,49 @@ class OpenRouterClientTest {
         }
 
     @Test
+    fun `outgoing tool definition includes required function type`() =
+        runTest {
+            val captured = mutableListOf<String>()
+            client(
+                body = """{"choices":[{"message":{"role":"assistant","content":"ok"}}]}""",
+                captured = captured,
+            ).complete(request)
+
+            val sent = Json.parseToJsonElement(captured.single()).jsonObject
+            val tool = sent["tools"]!!.jsonArray.single().jsonObject
+            assertEquals("function", tool["type"]?.jsonPrimitive?.content)
+        }
+
+    @Test
+    fun `outgoing assistant tool call history includes required function type`() =
+        runTest {
+            val captured = mutableListOf<String>()
+            val call = ChatMessage(Role.ASSISTANT, null, toolCalls = listOf(ToolCall("call_1", "create_reminder", "{}")))
+            client(
+                body = """{"choices":[{"message":{"role":"assistant","content":"ok"}}]}""",
+                captured = captured,
+            ).complete(LlmRequest(listOf(call, ChatMessage(Role.TOOL, "{}", toolCallId = "call_1")), request.tools))
+
+            val messages = Json.parseToJsonElement(captured.single()).jsonObject["messages"]!!.jsonArray
+            val serializedCall =
+                messages
+                    .first()
+                    .jsonObject["tool_calls"]!!
+                    .jsonArray
+                    .single()
+                    .jsonObject
+            assertEquals("function", serializedCall["type"]?.jsonPrimitive?.content)
+            assertEquals("call_1", serializedCall["id"]!!.jsonPrimitive.content)
+            assertEquals(
+                "call_1",
+                messages
+                    .last()
+                    .jsonObject["tool_call_id"]!!
+                    .jsonPrimitive.content,
+            )
+        }
+
+    @Test
     fun `http error becomes llm exception`() =
         runTest {
             assertThrows<LlmException> { client(HttpStatusCode.BadGateway, "{}").complete(request) }

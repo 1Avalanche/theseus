@@ -86,6 +86,8 @@ class OpenRouterClient(
             Json {
                 ignoreUnknownKeys = true
                 explicitNulls = false
+                // Обязательное type=function должно передаваться и при значении по умолчанию.
+                encodeDefaults = true
             }
     }
 }

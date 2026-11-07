@@ -27,7 +27,8 @@ import java.time.ZoneId
  * 1. Пользователь ищется в core **до** LLM: незнакомый или неактивный chatId — без ответа и без вызова модели.
  * 2. Модель получает системный промпт и инструменты из MCP core.
  * 3. Вызовы инструментов уходят в core с `userId` в `_meta`. Успех — ответ кодом по шаблону;
- *    ошибка или нераспознанный результат — результат возвращается модели, она формулирует ответ.
+ *    ошибка или нераспознанный результат — результат возвращается модели для исправления аргументов.
+ *    Текст модели не подтверждает выполнение: без результата core ответ формируется по безопасному шаблону.
  *
  * Этап 2: без истории диалога, подтверждений и учёта usage (этапы 3 и 5).
  */
@@ -95,10 +96,8 @@ class MessageHandler(
         log.debug("LLM ответила моделью {}, usage={}", response.model, response.usage)
         val calls = response.message.toolCalls
         if (calls.isEmpty()) {
-            return response.message.content
-                ?.trim()
-                .orEmpty()
-                .ifEmpty { texts.get("reply.empty") }
+            log.info("Ответ модели без вызова инструмента, user_id={}", user.id)
+            return texts.get(if (messages.any { it.role == Role.TOOL }) "reply.unconfirmed" else "reply.not_created")
         }
         messages += response.message
         val results = calls.map { call -> call to execute(user, call) }
@@ -106,9 +105,16 @@ class MessageHandler(
             results.map { (call, result) ->
                 if (result.isError) null else renderer.render(call.name, result.text, zone, now)
             }
-        val complete = rendered.all { it != null }
-        if (!complete) results.forEach { (call, result) -> messages += ChatMessage(Role.TOOL, result.text, toolCallId = call.id) }
-        return if (complete) rendered.joinToString("\n") else null
+        val confirmed = rendered.filterNotNull()
+        log.info("Обработаны инструменты, user_id={}, calls={}, confirmed={}", user.id, calls.size, confirmed.size)
+        return if (confirmed.isNotEmpty()) {
+            // Не терять уже выполненные действия и не предлагать модели повторить их при частичном успехе.
+            val replies = if (confirmed.size == results.size) confirmed else confirmed + texts.get("reply.unconfirmed")
+            replies.joinToString("\n")
+        } else {
+            results.forEach { (call, result) -> messages += ChatMessage(Role.TOOL, result.text, toolCallId = call.id) }
+            null
+        }
     }
 
     private suspend fun execute(
