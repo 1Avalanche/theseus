@@ -1,5 +1,5 @@
 # Стенд Theseus (prod или test) — один файл, два compose-проекта (DECISIONS.md §12).
-# Запускает deploy.sh:
+# Запускает ограниченный обработчик (docs/deploy-setup.md):
 #   docker compose -p theseus-<стенд> -f docker-compose.yml \
 #     --env-file <стенд>/stand.env --env-file <стенд>/image.env up -d
 # PostgreSQL — отдельный проект theseus-infra (сеть theseus-db должна существовать).
@@ -7,7 +7,7 @@
 
 services:
   core:
-    image: ${THESEUS_IMAGE_REGISTRY:?}/theseus-core:${THESEUS_IMAGE_TAG:?}
+    image: ${THESEUS_CORE_IMAGE:?}
     container_name: theseus-${THESEUS_STAND:?}-core
     restart: unless-stopped
     environment:
@@ -41,7 +41,7 @@ services:
         max-file: "3"
 
   agent:
-    image: ${THESEUS_IMAGE_REGISTRY}/theseus-agent:${THESEUS_IMAGE_TAG}
+    image: ${THESEUS_AGENT_IMAGE:?}
     container_name: theseus-${THESEUS_STAND}-agent
     restart: unless-stopped
     depends_on:

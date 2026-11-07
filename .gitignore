@@ -46,3 +46,9 @@ bin/
 
 ### Python (хуки Claude) ###
 __pycache__/
+
+### Секреты окружения; в Git — только *.env.example ###
+.env
+.env.*
+*.env
+!*.env.example

@@ -25,7 +25,13 @@ jobs:
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v5
       - name: Сборка и тесты
-        run: ./gradlew build
+        run: |
+          python3 -m unittest discover -s deploy/handler/tests -v
+          ./gradlew build
+      - name: Ограничения SSH и sudo в Ubuntu
+        run: |
+          docker build -f deploy/handler/tests/Dockerfile -t theseus-deploy-check .
+          docker run --rm --network none theseus-deploy-check
       - name: Отчёты тестов
         if: failure()
         uses: actions/upload-artifact@v4

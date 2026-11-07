@@ -1,0 +1,5 @@
+{
+  "repository": "OWNER/REPOSITORY",
+  "registry": "ghcr.io/owner",
+  "config_version": "1"
+}

@@ -12,8 +12,8 @@ description: Локальная проверка стенда Theseus в Docker 
 - `./gradlew build installDist` — зелёный.
 - tmp-файлы через Write (хук запрещает редиректы в файлы):
   - `infra.env` — 5 паролей из `deploy/env/infra.env.example` любыми значениями;
-  - `stand/test/stand.env` — по `deploy/env/stand.env.example`: `THESEUS_STAND=test`, `THESEUS_IMAGE_REGISTRY=local`, heap 128m, лимиты 300m, `THESEUS_CORE_DB_PASSWORD` = test core из infra.env, токен ≥ 32 символов, фиктивный бот-токен `123456:fake`;
-  - `stand/test/image.env` — `THESEUS_IMAGE_TAG=abc1234`.
+  - `stand/test/stand.env` — по `deploy/env/stand.env.example`: `THESEUS_STAND=test`, heap 128m, лимиты 300m, `THESEUS_CORE_DB_PASSWORD` = test core из infra.env, токен ≥ 32 символов, фиктивный бот-токен `123456:fake`;
+  - `stand/test/image.env` — `THESEUS_STAND=test`, `THESEUS_CORE_IMAGE=local/theseus-core:abc1234`, `THESEUS_AGENT_IMAGE=local/theseus-agent:abc1234`. Для проверки digest взять соответствующие ссылки из `docker image inspect --format '{{json .RepoDigests}}'` и заменить значения. В серверном обработчике разрешены только digest из root-approved релиза, локальные теги ему не передавать.
 
 ## 2. Infra
 ```
@@ -40,6 +40,8 @@ docker compose -p theseus-test -f deploy/vps/docker-compose.yml --env-file <tmp>
 - `docker stats --no-stream` — RSS в пределах `mem_limit` с запасом.
 
 ## 5. Уборка
+
+Изменения ограниченного обработчика дополнительно проверять `python3 -m unittest discover -s deploy/handler/tests -v` и контейнером `docker build -f deploy/handler/tests/Dockerfile -t local/theseus-deploy-check .`, затем `docker run --rm --network none local/theseus-deploy-check`. В контейнере настоящий SSH/sudo, Docker заменён тестовым исполнителем; socket хоста не подключается.
 ```
 docker compose -p theseus-test -f deploy/vps/docker-compose.yml --env-file … --env-file … down
 docker compose -p theseus-infra -f deploy/vps/infra/docker-compose.yml --env-file <tmp>/infra.env down
