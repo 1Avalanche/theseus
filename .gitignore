@@ -44,7 +44,7 @@ bin/
 ### Mac OS ###
 .DS_Store
 
-### Python (хуки Claude) ###
+### Python (хуки Codex и Claude) ###
 __pycache__/
 
 ### Секреты окружения; в Git — только *.env.example ###

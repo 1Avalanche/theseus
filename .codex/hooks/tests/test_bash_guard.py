@@ -1,4 +1,4 @@
-"""Тесты хука bash_guard. Запуск: python3 -m unittest discover -s .claude/hooks/tests"""
+"""Тесты хука bash_guard. Запуск: python3 -m unittest discover -s .codex/hooks/tests"""
 import json
 import os
 import subprocess
@@ -168,6 +168,40 @@ class ClaudeProcessTest(GuardTestCase):
         self.assertAllowed("ls .claude/rules")
 
 
+class CodexProcessTest(GuardTestCase):
+    def test_allows_exact_read_only_diagnostics(self):
+        for command in ("codex --version", "codex -V", "codex --help", "codex -h",
+                        "codex features list", "/usr/local/bin/codex features list",
+                        "env FOO=1 codex --version", 'sh -c "codex features list"'):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_diagnostic_exception_does_not_allow_extra_actions(self):
+        for command in ("codex features enable hooks", "codex features list --enable hooks",
+                        "codex --version exec x", "codex --help exec x", "codex features list x",
+                        "codex --version; codex exec x", "codex --help > src/help.txt",
+                        "codex features $(codex exec x)", "codex features $ACTION",
+                        "codex features list$(printf '')"):
+            with self.subTest(command=command):
+                self.assertBlocked(command)
+
+    def test_blocks_external_codex_processes(self):
+        for command in ("codex exec 'задача'", "/usr/local/bin/codex resume",
+                        "npx -y @openai/codex exec x", "pnpm dlx @openai/codex",
+                        "node ~/.npm/@openai/codex/bin/codex.js",
+                        "env FOO=1 codex exec x", "timeout 30 codex exec x",
+                        'sh -c "codex exec x"', "echo $(codex exec x)"):
+            with self.subTest(command=command):
+                self.assertBlocked(command)
+
+    def test_mentions_and_installation_are_allowed(self):
+        for command in ("echo 'codex exec x'", "rg 'codex exec' docs/",
+                        "command -v codex", "which codex", "npm install -g @openai/codex",
+                        "cat AGENTS.md", "ls .codex/rules"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+
 class ShellWritesTest(GuardTestCase):
     def test_redirects_into_project_are_blocked(self):
         self.assertBlocked("echo x > src/main/kotlin/Main.kt")
@@ -178,8 +212,7 @@ class ShellWritesTest(GuardTestCase):
         self.assertBlocked("cat <<EOF > src/A.kt\nclass A\nEOF")
         self.assertBlocked("echo x 1> .claude/settings.json")
         self.assertBlocked("echo x > $OUT")
-        self.assertBlocked('echo x > "$CLAUDE_PROJECT_DIR/src/A.kt"'.replace(
-            "$CLAUDE_PROJECT_DIR", self.project))
+        self.assertBlocked('echo x > "%s/src/A.kt"' % self.project)
 
     def test_cd_does_not_hide_project_paths(self):
         self.assertBlocked("cd /tmp; echo x > src/A.kt")
@@ -214,11 +247,9 @@ class FailClosedTest(GuardTestCase):
 
     def test_hook_protocol(self):
         script = os.path.join(HOOKS_DIR, "bash_guard.py")
-        env = dict(os.environ, CLAUDE_PROJECT_DIR=self.project)
-
         def run(payload):
             out = subprocess.run([sys.executable, script], input=json.dumps(payload),
-                                 capture_output=True, text=True, env=env, check=True)
+                                 capture_output=True, text=True, check=True)
             return out.stdout.strip()
 
         denied = json.loads(run({"tool_name": "Bash", "cwd": self.project,
@@ -228,7 +259,7 @@ class FailClosedTest(GuardTestCase):
                                   "tool_input": {"command": "git status"}}))
         self.assertEqual("", run({"tool_name": "Read", "tool_input": {}}))
         broken = subprocess.run([sys.executable, script], input="не json",
-                                capture_output=True, text=True, env=env)
+                                capture_output=True, text=True)
         self.assertIn('"deny"', broken.stdout)
 
 

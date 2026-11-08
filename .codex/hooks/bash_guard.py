@@ -5,7 +5,7 @@ PreToolUse-хук для инструмента Bash.
 Блокирует:
   * деструктивные команды (rm -r вне build/ и временных каталогов, git reset --hard,
     git push --force, docker compose down -v, DROP/TRUNCATE через psql, flyway clean и т. п.);
-  * запуск внешних процессов Claude (claude, npx @anthropic-ai/claude-code, ...);
+  * запуск внешних процессов Codex/Claude (codex, claude, npx @openai/codex, ...);
   * запись в файлы проекта через shell: редиректы >, >>, &>, а также tee, sed -i, perl -i.
 
 Команда разбирается лексером, близким к bash: учитываются кавычки, экранирование и
@@ -21,6 +21,8 @@ import json
 import os
 import re
 import sys
+
+from hook_context import project_root
 
 # Каталоги внутри проекта, куда shell может писать и где можно удалять рекурсивно.
 EXEMPT_DIRS = {"build", ".gradle", ".kotlin", "out"}
@@ -453,18 +455,23 @@ def short_flags(args):
     return "".join(a[1:] for a in args if a.startswith("-") and not a.startswith("--") and len(a) > 1)
 
 
-def is_claude(name, args):
-    def mentions(a):
-        return a == "claude" or "claude-code" in a or a.startswith("@anthropic-ai/claude")
+def is_agent_process(name, args):
+    if name == "codex" and tuple(args) in {
+            ("--version",), ("-V",), ("--help",), ("-h",), ("features", "list")}:
+        return False
 
-    if name in ("claude", "claude-code"):
+    def mentions(a):
+        return (a in ("claude", "codex") or "claude-code" in a
+                or a.startswith("@anthropic-ai/claude") or a.startswith("@openai/codex"))
+
+    if name in ("claude", "claude-code", "codex"):
         return True
     if name in ("npx", "bunx", "pnpx"):
         return any(mentions(a) for a in args)
     if name in ("npm", "pnpm", "yarn", "bun") and args[:1] and args[0] in ("exec", "x", "dlx"):
         return any(mentions(a) for a in args)
     if name in ("node", "deno"):
-        return any("claude-code" in a for a in args)
+        return any("claude-code" in a or "@openai/codex" in a or a.endswith("/codex.js") for a in args)
     return False
 
 
@@ -638,8 +645,8 @@ class Analyzer:
         if name == "eval":
             self.check_script(" ".join(args), depth + 1)
             return
-        if is_claude(name, args):
-            self.deny("запуск внешнего процесса Claude: %s" % " ".join([head.text] + args)[:120])
+        if is_agent_process(name, args) or (name == "codex" and any(w.dynamic for w in wargs)):
+            self.deny("запуск внешнего процесса Codex/Claude: %s" % " ".join([head.text] + args)[:120])
             return
         reason = destructive_reason(name, args)
         if reason:
@@ -762,7 +769,7 @@ class Analyzer:
             if op == ">&" and (w.text.isdigit() or w.text == "-"):
                 continue  # дублирование дескриптора: 2>&1
             if self._is_protected(w):
-                self.deny("запись в файл проекта через редирект %s %s — используй Edit/Write" % (op, w.text))
+                self.deny("запись в файл проекта через редирект %s %s — используй apply_patch" % (op, w.text))
 
     def _check_file_writers(self, name, wargs):
         files = []
@@ -774,7 +781,7 @@ class Analyzer:
             files = self._perl_inplace_files(wargs)
         for w in files:
             if self._is_protected(w):
-                self.deny("запись в файл проекта через %s %s — используй Edit/Write" % (name, w.text))
+                self.deny("запись в файл проекта через %s %s — используй apply_patch" % (name, w.text))
 
     @staticmethod
     def _sed_inplace_files(wargs):
@@ -903,16 +910,15 @@ def main():
         if data.get("tool_name") != "Bash":
             return 0
         command = (data.get("tool_input") or {}).get("command") or ""
-        project = (os.environ.get("CLAUDE_PROJECT_DIR")
-                   or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        project = project_root(data)
         reasons = analyze(command, project, data.get("cwd") or project)
     except Exception as e:  # fail-closed: сломанный хук не должен пропускать команды
         reasons = ["внутренняя ошибка хука bash_guard: %r" % e]
     if reasons:
         message = ("Команда заблокирована хуком bash_guard:\n"
                    + "\n".join("- " + r for r in reasons)
-                   + "\nФайлы проекта меняй через Edit/Write. Деструктивные операции и запуск "
-                     "других экземпляров Claude выполняет только владелец вручную.")
+                   + "\nФайлы проекта меняй через apply_patch. Деструктивные операции и запуск "
+                     "внешних экземпляров Codex/Claude выполняет только владелец вручную.")
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",

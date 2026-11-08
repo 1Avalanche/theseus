@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 '/Users/anastasiyaa/IdeaProjects/theseus/.codex/hooks/bash_guard.py'",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/bash_guard.py\"",
             "timeout": 10
           }
         ]
@@ -17,12 +17,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 '/Users/anastasiyaa/IdeaProjects/theseus/.codex/hooks/doc_guard.py'",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/doc_guard.py\"",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "python3 '/Users/anastasiyaa/IdeaProjects/theseus/.codex/hooks/test_guard.py'",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/test_guard.py\"",
             "timeout": 600
           }
         ]

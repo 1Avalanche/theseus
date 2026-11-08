@@ -21,20 +21,24 @@ import re
 import subprocess
 import sys
 
+from hook_context import project_root
+
 # Пути, изменения в которых документации не требуют (сами документы, тесты, служебное).
 IGNORED = re.compile(
     r"(^|/)src/test/"
-    r"|^\.claude/hooks/tests/"
+    r"|^\.(claude|codex)/hooks/tests/"
     r"|^docs/"
     r"|(^|/)README\.md$"
-    r"|^CLAUDE\.md$"
-    r"|^\.claude/(rules|agents|skills)/"
+    r"|(^|/)(CLAUDE|AGENTS)\.md$"
+    r"|^\.(claude|codex)/(rules|agents|skills)/"
+    r"|^\.agents/skills/"
     r"|^\.idea/"
     r"|^\.gitignore$"
 )
 
 # (шаблон пути от корня проекта, документы). {module} — модуль, в котором лежит файл.
 RULES = [
+    (r"^\.codex/hooks/|^\.codex/(hooks\.json|config\.toml)$", ["docs/codex.md"]),
     (r"^\.claude/hooks/|^\.claude/settings\.json$", ["docs/claude-hooks.md"]),
     (r"(^|/)db/migration/", ["docs/operations.md", "docs/modules/{module}.md"]),
     (r"(^|/)resources/persona/", ["docs/persona.md"]),
@@ -51,7 +55,7 @@ COMPILED_RULES = [(re.compile(p), docs) for p, docs in RULES]
 # «Модули» без собственного docs/modules/<модуль>.md: корень проекта и сборка (описана в architecture.md).
 NO_MODULE_DOCS = {"root", "build-logic"}
 
-STATE_FILE = "claude-doc-guard.json"
+STATE_FILE = "codex-doc-guard.json"
 
 
 def module_of(path):
@@ -153,7 +157,10 @@ def decide(project, stop_hook_active):
         + "\n".join(lines)
         + "\n\nПеред завершением:\n"
         "1. Вызови субагента docs-writer: передай ему список файлов выше и кратко — что "
-        "изменено и зачем. Он сверит и обновит описательную документацию.\n"
+        "изменено и зачем, и инструкции .codex/agents/docs-writer.toml. "
+        "Если именованная роль недоступна, задай модель из TOML параметром запуска "
+        "обычного субагента. "
+        "Если субагенты недоступны — выполни эту процедуру сам.\n"
         "2. Если принято архитектурное решение — сам добавь запись в docs/DECISIONS.md "
         "(причину знаешь только ты).\n"
         "3. Если документация уже актуальна или изменения её не затрагивают — коротко "
@@ -165,7 +172,7 @@ def decide(project, stop_hook_active):
 def main():
     try:
         data = json.load(sys.stdin)
-        project = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or os.getcwd()
+        project = project_root(data)
         reason = decide(project, bool(data.get("stop_hook_active")))
     except Exception as e:  # fail-open: не мешаем завершить ход
         print("doc_guard: %r" % e, file=sys.stderr)

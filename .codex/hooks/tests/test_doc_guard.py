@@ -1,4 +1,4 @@
-"""Тесты хука doc_guard. Запуск: python3 -m unittest discover -s .claude/hooks/tests"""
+"""Тесты хука doc_guard. Запуск: python3 -m unittest discover -s .codex/hooks/tests"""
 import json
 import os
 import subprocess
@@ -45,6 +45,19 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual({"docs/architecture.md"},
                          result["build-logic/src/main/kotlin/theseus.kotlin-jvm.gradle.kts"])
         self.assertNotIn("src/main/kotlin/Main.kt", result)
+
+    def test_codex_configuration_maps_to_codex_doc(self):
+        for path in (".codex/hooks/bash_guard.py", ".codex/hooks/hook_context.py",
+                     ".codex/hooks.json", ".codex/config.toml"):
+            with self.subTest(path=path):
+                self.assertEqual({path: {"docs/codex.md"}}, doc_guard.classify([path]))
+
+    def test_codex_instructions_and_hook_tests_are_ignored(self):
+        self.assertEqual({}, doc_guard.classify([
+            "AGENTS.md", "agent/AGENTS.md", ".codex/rules/testing.md",
+            ".codex/agents/docs-writer.toml", ".agents/skills/add-module/SKILL.md",
+            ".codex/hooks/tests/test_doc_guard.py",
+        ]))
 
     def test_ignored_paths(self):
         self.assertEqual({}, doc_guard.classify([
@@ -120,12 +133,12 @@ class DecideTest(unittest.TestCase):
     def test_hook_protocol(self):
         self.write("core/src/main/kotlin/A.kt", "class A")
         script = os.path.join(HOOKS_DIR, "doc_guard.py")
-        env = dict(os.environ, CLAUDE_PROJECT_DIR=self.project)
-        out = subprocess.run([sys.executable, script], input=json.dumps({"stop_hook_active": False}),
-                             capture_output=True, text=True, env=env, check=True).stdout
+        payload = {"cwd": self.project, "hook_event_name": "Stop", "stop_hook_active": False}
+        out = subprocess.run([sys.executable, script], input=json.dumps(payload),
+                             capture_output=True, text=True, check=True).stdout
         self.assertEqual("block", json.loads(out)["decision"])
         broken = subprocess.run([sys.executable, script], input="не json",
-                                capture_output=True, text=True, env=env)
+                                capture_output=True, text=True)
         self.assertEqual(0, broken.returncode)
         self.assertEqual("", broken.stdout)
 

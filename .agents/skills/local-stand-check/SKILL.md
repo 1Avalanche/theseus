@@ -5,12 +5,12 @@ description: Локальная проверка стенда Theseus в Docker 
 
 # Локальная проверка стенда
 
-Без реальных токенов: Telegram отвечает 401, это ожидаемо. Временные файлы — в `$CLAUDE_JOB_DIR/tmp` (или другом tmp), не в репозитории.
+Без реальных токенов: Telegram отвечает 401, это ожидаемо. Временные файлы — в отдельном каталоге, созданном `mktemp -d`, не в репозитории.
 
 ## 1. Подготовка
-- Docker запущен (`docker info`). Зависает на credentials — см. `.Codex/rules/deploy.md`.
+- Docker запущен (`docker info`). Зависает на credentials — см. `.codex/rules/deploy.md`.
 - `./gradlew build installDist` — зелёный.
-- tmp-файлы через Write (хук запрещает редиректы в файлы):
+- tmp-файлы создавай доступным инструментом записи или скриптом вне репозитория; файлы проекта меняй через `apply_patch`:
   - `infra.env` — 5 паролей из `deploy/env/infra.env.example` любыми значениями;
   - `stand/test/stand.env` — по `deploy/env/stand.env.example`: `THESEUS_STAND=test`, heap 128m, лимиты 300m, `THESEUS_CORE_DB_PASSWORD` = test core из infra.env, токен ≥ 32 символов, фиктивный бот-токен `123456:fake`;
   - `stand/test/image.env` — `THESEUS_STAND=test`, `THESEUS_CORE_IMAGE=local/theseus-core:abc1234`, `THESEUS_AGENT_IMAGE=local/theseus-agent:abc1234`. Для проверки digest взять соответствующие ссылки из `docker image inspect --format '{{json .RepoDigests}}'` и заменить значения. В серверном обработчике разрешены только digest из root-approved релиза, локальные теги ему не передавать.
@@ -36,7 +36,7 @@ docker compose -p theseus-test -f deploy/vps/docker-compose.yml --env-file <tmp>
 - MCP: `POST /mcp` (`Accept: application/json, text/event-stream`) с `tools/call` `create_reminder`, `after.minutes=1`, `_meta.theseus/user_id` = id админа → `"status":"created"`.
 - Через ~1 мин в логах core — «не доставлено… 401» (планировщик сработал).
 - agent с фиктивным токеном падает на старте с `UnauthorizedException` и перезапускается — это ожидаемо.
-- `docker logs theseus-test-core theseus-test-agent 2>&1 | grep -c '<текст напоминания>'` = 0.
+- Отсутствие уникального контрольного текста напоминания проверь командой `python3 .agents/skills/local-stand-check/scripts/check_logs.py '<текст напоминания>' theseus-test-core theseus-test-agent` — код завершения 0. Скрипт читает stdout/stderr каждого контейнера отдельно; ошибка Docker или таймаут дают ненулевой код, сами логи не выводятся. Ноль совпадений после ошибки чтения не считается успешной проверкой.
 - `docker stats --no-stream` — RSS в пределах `mem_limit` с запасом.
 
 ## 5. Уборка

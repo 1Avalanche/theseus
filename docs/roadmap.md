@@ -7,6 +7,7 @@
 ## ✅ Этап 0. Фундамент
 - ✅ Утверждён стек.
 - ✅ Правила, хуки (`bash_guard`, `doc_guard`, `test_guard`), субагент `docs-writer`, скилл `add-module`.
+- ✅ Адаптация настройки Claude Code для Codex: правила через `AGENTS.md`, навыки `.agents/skills/`, роль `docs-writer`, переносимые хуки с отдельным состоянием; описание — `docs/codex.md`.
 - ✅ Каркас Gradle: `build-logic`, version catalog, модули `:core` и `:agent`, ktlint + detekt.
 
 ## ✅ Этап 1. Контракты (проектирование, без кода)
