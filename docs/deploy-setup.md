@@ -1,6 +1,6 @@
 # Установка ограниченного деплоя на VPS
 
-Инструкция для владельца с отдельным административным SSH-доступом и `sudo`. Пользователь `deploy` нужен только GitHub Actions. Секреты вводятся непосредственно на VPS или в настройках GitHub; в репозиторий и чат их не передавать. Эксплуатационный контракт — [operations.md](operations.md), решения — `DECISIONS.md` §15.
+Инструкция для владельца с отдельным административным SSH-доступом и `sudo`. Пользователь `deploy` нужен только GitHub Actions. Секреты вводятся непосредственно на VPS или в настройках GitHub; в репозиторий и чат их не передавать. Эксплуатационный контракт — [operations.md](operations.md), решения — `DECISIONS.md` §17 и §19.
 
 ## 1. Проверить подготовленный сервер
 
@@ -50,12 +50,15 @@ sudo install -d -o root -g root -m 755 /usr/local/lib/theseus
 ```bash
 sudo install -o root -g root -m 644 ~/theseus-install/handler/deploy_handler.py /usr/local/lib/theseus/deploy_handler.py
 sudo install -o root -g root -m 755 ~/theseus-install/ssh/ssh-entry /usr/local/lib/theseus/ssh-entry
+sudo install -o root -g root -m 755 ~/theseus-install/ssh/ssh-authorize-entry /usr/local/lib/theseus/ssh-authorize-entry
 sudo install -o root -g root -m 600 ~/theseus-install/vps/docker-compose.yml /opt/theseus/docker-compose.yml
 sudo install -o root -g root -m 600 ~/theseus-install/vps/infra/docker-compose.yml /opt/theseus/infra/docker-compose.yml
 sudo install -o root -g root -m 755 ~/theseus-install/vps/infra/initdb/10-theseus.sh /opt/theseus/infra/initdb/10-theseus.sh
 sudo install -o root -g root -m 600 ~/theseus-install/examples/config.json /opt/theseus/config.json
+sudo install -o root -g root -m 600 ~/theseus-install/examples/authorization.json /opt/theseus/authorization.json
 sudo install -o root -g root -m 600 /dev/null /opt/theseus/deploy.lock
 sudoedit /opt/theseus/config.json
+sudoedit /opt/theseus/authorization.json
 ```
 
 В `config.json` заменить `OWNER/REPOSITORY` и `ghcr.io/owner`; оставить `config_version` равной `"1"` для этого комплекта:
@@ -63,6 +66,14 @@ sudoedit /opt/theseus/config.json
 ```json
 {"repository":"OWNER/REPOSITORY","registry":"ghcr.io/owner","config_version":"1"}
 ```
+
+В `authorization.json` указать реальные положительные числовые `repository_id` и `owner_id` исходного репозитория и его владельца; значения в шаблоне примерные. Их можно получить из GitHub REST `GET /repos/1Avalanche/theseus`: поля `id` и `owner.id` соответственно. Для приватного репозитория нужна аутентификация; токен не передавать аргументом команды или в чат. При наличии авторизованного GitHub CLI можно выполнить:
+
+```bash
+gh api repos/1Avalanche/theseus --jq '{repository_id: .id, owner_id: .owner.id}'
+```
+
+При переносе или смене имени также обновить workflow и `config.json`.
 
 После включения доступа любые изменения комплекта выполняются одной административной операцией под общей блокировкой. Получить её можно командой ниже; внутри открывшейся root-оболочки внести все согласованные изменения, затем выполнить `exit`. Не пересоздавать и не удалять сам `deploy.lock`: блокировка привязана к inode.
 
@@ -97,9 +108,9 @@ sudoedit /opt/theseus/test/stand.env
 
 ## 5. Настроить чтение GitHub и GHCR сервером
 
-Серверу нужны две операции: читать приватные образы GHCR и проверять принадлежность коммита `main`. Использовать отдельные минимально необходимые credentials; они не дают GitHub Actions административный доступ к VPS.
+Серверу нужны две операции: читать приватные образы GHCR, проверять происхождение артефакта и принадлежность коммита `main`. Использовать отдельные минимально необходимые credentials; они не дают GitHub Actions административный доступ к VPS.
 
-- GitHub token для проверки репозитория: доступ только к нужному репозиторию и чтению его содержимого. Записать в `/opt/theseus/github.env` строку `GITHUB_TOKEN=…` через `sudoedit`; файл root-owned `600`.
+- Fine-grained GitHub token для нужного репозитория: права Contents read и Actions read. Записать в `/opt/theseus/github.env` строку `GITHUB_TOKEN=…` через `sudoedit`; файл root-owned `600`.
 - Credential GHCR: PAT classic с `read:packages`, без прав записи/удаления пакетов; учётная запись должна иметь доступ к нужным приватным пакетам. Войти администратором в Docker с конфигурацией `/opt/theseus/docker` через `--password-stdin`; токен не передавать как аргумент командной строки. Docker хранит credential в `config.json`, поэтому каталог root-only, файл — `600`. GitHub Packages требует PAT classic для такой внешней авторизации: [документация GHCR](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry).
 
 Создать `config.json` из поставляемого шаблона, указать точный GitHub-репозиторий и registry `ghcr.io/<owner>` строчными. Любая ошибка серверной проверки GitHub блокирует prod; обхода флагом клиента нет.
@@ -141,13 +152,15 @@ sudo docker exec theseus-postgres psql -U postgres -c '\du'
 
 ## 7. Ограничить SSH и sudo
 
-Использовать поставляемые проверенные конфигурации SSH и sudoers. Sudo разрешает только два точных вызова обработчика: фиксированный Python с `-I`, фиксированный root-owned файл и аргумент `test` либо `prod`. В правиле нет wildcard, произвольного Python, shell или Docker.
+Использовать поставляемые проверенные конфигурации SSH и sudoers. Sudo разрешает четыре точных вызова обработчика для Deploy и Authorize: фиксированный Python с `-I`, фиксированный root-owned файл и аргументы `test` или `prod`, либо `authorize test` или `authorize prod`. В правиле нет wildcard, произвольного Python, shell или Docker.
 
-Сгенерировать на своём компьютере два новых ключа, отдельно для стендов:
+Сгенерировать на своём компьютере четыре новых ключа, отдельно для операций и стендов:
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/theseus-test -C theseus-test
 ssh-keygen -t ed25519 -f ~/.ssh/theseus-prod -C theseus-prod
+ssh-keygen -t ed25519 -f ~/.ssh/theseus-authorize-test -C theseus-authorize-test
+ssh-keygen -t ed25519 -f ~/.ssh/theseus-authorize-prod -C theseus-authorize-prod
 ```
 
 Для неинтерактивного GitHub Actions используется выделенный ключ без passphrase. Приватные файлы оставить на своём компьютере и поместить непосредственно в GitHub Secrets своего стенда. На VPS установить только `.pub`, каждую публичную строку с собственным forced command:
@@ -155,11 +168,13 @@ ssh-keygen -t ed25519 -f ~/.ssh/theseus-prod -C theseus-prod
 ```text
 restrict,command="/usr/local/lib/theseus/ssh-entry test" ssh-ed25519 ПУБЛИЧНЫЙ_КЛЮЧ_TEST theseus-test
 restrict,command="/usr/local/lib/theseus/ssh-entry prod" ssh-ed25519 ПУБЛИЧНЫЙ_КЛЮЧ_PROD theseus-prod
+restrict,command="/usr/local/lib/theseus/ssh-authorize-entry test" ssh-ed25519 ПУБЛИЧНЫЙ_КЛЮЧ_AUTHORIZE_TEST theseus-authorize-test
+restrict,command="/usr/local/lib/theseus/ssh-authorize-entry prod" ssh-ed25519 ПУБЛИЧНЫЙ_КЛЮЧ_AUTHORIZE_PROD theseus-authorize-prod
 ```
 
 Хранить строки в `/etc/ssh/theseus/authorized_keys`, владелец `root`. SSH для `deploy` должен использовать только этот файл, отключать пароль, интерактивную аутентификацию, PTY, forwarding и пользовательское окружение. Домашний каталог и startup-файлы свежего `deploy` также защитить от записи этим пользователем. Entry отвергает `SSH_ORIGINAL_COMMAND`: `ssh deploy@host 'команда'`, `scp`, SFTP не становятся альтернативными входами.
 
-На VPS установить ограничения и открыть редактор публичных ключей:
+На VPS установить ограничения и открыть редактор публичных ключей. При обновлении действующей установки выполнять изменения обработчика, entrypoint, sudoers и ключей под общей блокировкой из шага 3; не заменять существующий `authorized_keys` пустым файлом.
 
 ```bash
 sudo chown -R root:root /home/deploy
@@ -186,38 +201,17 @@ sudo /usr/sbin/sshd -T -C user=deploy,host=localhost,addr=127.0.0.1
 
 Домашний каталог `deploy`, `.bashrc`, `.profile` и другие startup-файлы должны принадлежать root без права записи группы/остальных. Убедиться, что их содержимое — штатные файлы свежей учётной записи: передача владения уже подменённого скрипта не делает его безопасным. Системные `/etc/profile`, `/etc/bash.bashrc` и `/etc/environment` остаются доверенной конфигурацией администратора. Конфигурация окружения на сервере существует; обработчик отдельно ограничивает окружение запуска Docker, а Python вызывается с `-I`.
 
-Перед применением проверить `sudo visudo -cf /etc/sudoers.d/theseus-deploy` и `sudo /usr/sbin/sshd -t`. Только после успешной проверки перезагрузить конфигурацию `sudo systemctl reload ssh`. Текущую административную сессию оставить открытой и в другой сессии проверить административный вход и оба ограниченных ключа.
+Перед применением проверить `sudo visudo -cf /etc/sudoers.d/theseus-deploy` и `sudo /usr/sbin/sshd -t`. Только после успешной проверки перезагрузить конфигурацию `sudo systemctl reload ssh`. Текущую административную сессию оставить открытой и в другой сессии проверить административный вход и все четыре ограниченных ключа.
 
 ## 8. Разрешить первый релиз
 
-Сначала запустить workflow **Build release** для проверенного ref: он выполняет сборку и тесты, отправляет оба образа в GHCR и выдаёт artifact с кандидатом `release.json`. Проверить происхождение сборки, SHA коммита и фактический digest каждого образа. Кандидат ещё не разрешение деплоя. Тег с SHA и image label не доказывают происхождение: при утверждении владелец отвечает за соответствие digest проверенной сборке.
+Для новой установки сначала настроить Environments по шагу 10 и установить authorizer административным доступом под общей блокировкой, как в шагах 2–3 и 7. Состояние действующего VPS на 2026-11-10 описано ниже.
 
-Создать на VPS под общей блокировкой `/opt/theseus/releases/test/<полный-sha>.json` с владельцем root и правами `600`:
+Владелец запускает **Build release** из workflow на `main`, указав `ref=main` или проверенный полный SHA. Сборка выполняет проверки, публикует образы и artifact `release-candidate` с `release.json`. Проверить сборку и digest обоих образов: тег и image label не подтверждают происхождение.
 
-```json
-{
-  "commit": "0123456789abcdef0123456789abcdef01234567",
-  "config_version": "1",
-  "core_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-  "agent_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
-}
-```
+Запустить **Authorize release** из `main` с числовым `build_run_id` из URL сборки и `stand=test`. Preview без SSH-секретов показывает данные релиза, ID артефакта и SHA-256 ZIP до approval. Владелец проверяет их и одобряет Environment. Сервер с отдельным SSH-ключом повторно проверяет происхождение сборки и артефакта, ZIP и `release.json`, затем под общей блокировкой записывает разрешение test. Запрос содержит только `action`, `build_run_id`, `artifact_id`, `artifact_digest`, `release` и ограничен 1024 байтами. Авторизация не запускает Docker.
 
-Значения выше демонстрационные; заменить всеми четырьмя проверенными значениями. Имя файла должно совпадать с `commit`. Разрешение test не разрешает prod: для продвижения тех же образов в prod владелец устанавливает такую же проверенную запись в `releases/prod/`. Дополнительно сервер сверит коммит с текущей `main`.
-
-Передать проверенный кандидат по административному SSH в `~/theseus-release.json`. Подставить проверенный полный SHA вместо `ПОЛНЫЙ_SHA_40_HEX`; затем на VPS установить разрешение релиза под общей блокировкой:
-
-```bash
-sudo flock -x /opt/theseus/deploy.lock install -o root -g root -m 600 ~/theseus-release.json /opt/theseus/releases/test/ПОЛНЫЙ_SHA_40_HEX.json
-```
-
-Файл копируется целиком до снятия блокировки, поэтому конкурентный обработчик не прочитает частично установленный релиз. Путь источника указывает на проверенный администратором кандидат, не на содержимое произвольной ветки.
-
-### Будущая автоматизация разрешения релиза
-
-**Статус: запланировано, реализация не начата.** Вместо ручной установки записи из шага 8 предполагается отдельный workflow `Authorize release`: approval конкретного кандидата в защищённом GitHub Environment, затем вызов отдельного SSH forced-command authorizer. Сервер проверит `release.json`, получит общую блокировку и для prod сверит коммит с `main`, прежде чем добавить разрешённый SHA. Обычный Deploy останется отдельной операцией и не сможет самостоятельно разрешать релизы.
-
-Сейчас дополнительных workflow, authorizer и его ключей нет. До реализации использовать текущий ручной шаг 8; этот план не требует менять настройки VPS.
+После проверки test остановить стенд; отдельно разрешить тот же кандидат для prod и выполнить Deploy тех же образов. Для prod сервер проверяет, что коммит входит в текущую `main`. Существующий SHA с другими digest не перезаписывается. Отдельный Deploy принимает только ранее разрешённый SHA.
 
 ## 9. Проверить ограничения и выполнить деплой
 
@@ -230,7 +224,7 @@ printf '%s\n' '{"action":"deploy","release":"ПОЛНЫЙ_SHA_40_HEX"}' | \
 
 Для неизвестного релиза ожидается отказ до изменений контейнеров. Для разрешённого test-релиза — дамп, загрузка образов, обновление core/agent и успешный healthcheck. Реальные токены не выводить в команду или чат.
 
-Проверить отказы: удалённая shell-команда, SFTP/SCP, неизвестный релиз, лишние поля JSON и попытка указать стенд в запросе. Test-ключ не должен управлять prod. Проверить отсутствие доступа пользователя к `/opt/theseus/prod/stand.env` и Docker socket. Точный стенд закреплён за ключом; `VPS_USER` в обоих Environments одинаков — `deploy`.
+Проверить, что Authorize-ключи не выполняют Deploy или stop, Deploy-ключи не разрешают релизы, и ни один ключ не выбирает другой стенд. Проверить отказы: удалённая shell-команда, SFTP/SCP, неизвестный релиз, лишние поля JSON и попытка указать стенд в запросе. Test-ключ не должен управлять prod. Проверить отсутствие доступа пользователя к `/opt/theseus/prod/stand.env` и Docker socket. Точный стенд закреплён за ключом; `VPS_USER` в обоих Environments одинаков — `deploy`.
 
 После проверки выключить test, чтобы оставить запас памяти:
 
@@ -242,13 +236,14 @@ printf '%s\n' '{"action":"stop"}' | ssh -T -i ~/.ssh/theseus-test deploy@VPS_HOS
 
 ## 10. Заполнить GitHub Environments
 
-Создать `test` и `prod`, ограничить prod веткой `main`. В каждом добавить Secrets:
+Создать `test` и `prod`, в обоих разрешить только ветку `main`. Назначить единственным required reviewer владельца, выключить `Prevent self-review` и административный обход. Required reviewers для приватного репозитория зависят от тарифа; для публичного поддерживаются актуальными планами: [GitHub Environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments). Workflow не выполняют release, authorize и deploy при запуске другим аккаунтом, включая write collaborator; approval — отдельный барьер. Администратор репозитория или VPS может изменить политику. Секреты SSH разместить только в соответствующих Environment:
 
 | Secret | Значение |
 |---|---|
 | `VPS_HOST` | Адрес VPS |
 | `VPS_USER` | `deploy` |
-| `VPS_SSH_KEY` | Приватный ключ соответствующего стенда |
+| `VPS_SSH_KEY` | Приватный Deploy-ключ соответствующего стенда |
+| `VPS_AUTHORIZE_SSH_KEY` | Отдельный приватный Authorize-ключ соответствующего стенда |
 | `VPS_KNOWN_HOSTS` | Публичный ключ SSH-сервера в формате known_hosts |
 
 Отпечаток host key получить через административную консоль VPS, например `sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`, и сверить с записью known_hosts. Одного непроверенного `ssh-keyscan` недостаточно. Токены Telegram, OpenRouter и пароли БД остаются только на VPS.
@@ -264,7 +259,7 @@ docker build -f deploy/handler/tests/Dockerfile -t local/theseus-deploy-check .
 docker run --rm --network none local/theseus-deploy-check
 ```
 
-Проверка запускает 17 юнит-тестов и 6 интеграционных тестов с настоящими OpenSSH, sudo и файловыми правами. Команды Docker внутри проверки заменены фейком; Docker socket хоста в контейнер не передаётся. Эти тесты доказывают ограничения входа, прав и протокола, но не успешный запуск приложения через настоящий Docker.
+Проверка запускает юнит- и интеграционные тесты с настоящими OpenSSH, sudo и файловыми правами. Команды Docker внутри проверки заменены фейком; Docker socket хоста в контейнер не передаётся. Эти тесты доказывают ограничения входа, прав и протокола, но не успешный запуск приложения через настоящий Docker.
 
 Быстрый локальный запуск Python:
 
@@ -272,13 +267,31 @@ docker run --rm --network none local/theseus-deploy-check
 python3 -m unittest discover -s deploy/handler/tests -v
 ```
 
-Без специального Linux-окружения шесть SSH/sudo-тестов пропускаются. При реализации все 23 теста прошли в Ubuntu 22.04 контейнере; `./gradlew build installDist` завершился успешно. Публикация в реальный приватный GHCR, настройки GitHub Environments и работоспособность VPS проверяются отдельно при установке.
+Без специального Linux-окружения SSH/sudo-тесты пропускаются. Результаты нового комплекта и состояние его установки приведены ниже; реальный запуск нового процесса релиза ещё предстоит.
 
 Build release также запускает контейнерные проверки настоящего SSH/sudo перед публикацией образов.
 
 Локальный прогон с настоящими Docker/Compose выполнен отдельно: оба локальных образа закреплены по digest, использованы чистая отдельная БД и том `theseus-deploy-check-pgdata`. Повторный запуск infra initdb прошёл идемпотентно. Core стал `healthy`; REST без авторизации вернул 401, с авторизацией — активного администратора. MCP `create_reminder` вернул `created`; при наступлении срока планировщик попытался доставить уведомление и зарегистрировал Telegram 401. Agent с фиктивным токеном завершался с `UnauthorizedException` и перезапускался — ожидаемый результат этой проверки. Успешная доставка в настоящий Telegram и prod-деплой через приватный GHCR этим прогоном не проверены.
 
 Локально core занимал около 232 МиБ из лимита 300 МиБ, PostgreSQL — около 74 МиБ из 320 МиБ. Это измерения на ARM Mac; фактический бюджет VPS x86 проверяется после установки. Проверены непустые логи обоих контейнеров: agent содержит ожидаемый `UnauthorizedException`, текст тестового напоминания, фиктивный сервисный токен и токен бота в логах core и agent отсутствуют. После проверки стенды останавливаются через Compose `down` без удаления томов.
+
+## Локальная проверка нового комплекта — 2026-11-08
+
+`./gradlew build installDist` и actionlint в Docker прошли; 43 теста обработчика прошли в Ubuntu 22.04, включая 8 SSH/sudo. На macOS прошли 35 тестов, 8 SSH/sudo пропущены. Проверки хуков: 74 теста прошли.
+
+Изолированный Compose `theseus-authorize-check` использовал новые образы из installDist, отдельные сеть и том `theseus-authorize-check-pgdata`. Повторный initdb прошёл идемпотентно, core стал healthy. REST без токена вернул 401, с токеном — активного администратора; MCP вернул `created`, планировщик зарегистрировал доставку с ответом 401. Agent с фиктивным токеном ожидаемо завершался с `UnauthorizedException`. Проверка логов с доступом к Docker не обнаружила тестовый текст `authorize_check_20261108` в логах обоих сервисов.
+
+Снимок памяти: PostgreSQL 38,3 МиБ из 320 МиБ, core 199,3 МиБ из 300 МиБ; agent измерить не удалось между перезапусками. Оба Compose остановлены через `down` без удаления тома. Эти локальные проверки не подтверждают реальный запуск Actions.
+
+## Установка Authorize на VPS — 2026-11-10
+
+До изменений сделаны резервные копии. Администратор установил под общей блокировкой обновлённый `deploy_handler.py` (root:root, 644), `ssh-authorize-entry` (755) и sudoers (440); `visudo -c` прошёл. Создан root-owned `authorization.json` с полученными через API `repository_id=1446594405` и `owner_id=54006323`. Владелец обновил `github.env`; запросы к API Actions runs и artifacts прошли.
+
+На Mac созданы отдельные ключи Authorize для test и prod, их публичные части добавлены в root-owned `authorized_keys` с `restrict` и соответствующими `ssh-authorize-entry test/prod`; прежние ключи Deploy сохранены. `sshd -t` прошёл. Подключение каждым новым ключом с запросом `{}` вернуло «Отказ: Недопустимые поля разрешения». Это подтверждает вход в authorizer; успешное разрешение релиза и отказ при попытке управления чужим стендом таким запросом не проверены.
+
+По сообщению владельца, репозиторий теперь Public; в обоих Environments единственный required reviewer — `1Avalanche`, `Prevent self-review` и административный обход выключены, разрешена только ветка `main`, оба секрета `VPS_AUTHORIZE_SSH_KEY` добавлены. Независимой API-проверки настроек Environments не было.
+
+Владелец удалил прежние Actions runs вместе с артефактами перед публикацией. Локальные истории `main` (`796f5f8`) и `origin/release-0.1.0` (`f9944fb`) проверены Gitleaks без находок; release — предок main и отстаёт на два коммита. На момент этой записи workflow и остальной код нового комплекта не закоммичены в `develop`, `main` — `796f5f8`. Далее нужны commit, push и merge, затем реальная сборка Build release, Authorize release для test и prod и отдельный Deploy. Эти операции ещё не подтверждены.
 
 ## Проверка на VPS — 2026-11-07
 

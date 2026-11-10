@@ -1,0 +1,10 @@
+#!/bin/sh
+# Отдельные ключи разрешения релизов; стенд задаёт только authorized_keys.
+set -eu
+[ "$#" -eq 1 ] || exit 1
+case "$1" in test|prod) ;; *) exit 1 ;; esac
+if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
+    echo 'Произвольная SSH-команда запрещена' >&2
+    exit 1
+fi
+exec /usr/bin/sudo -n /usr/bin/python3 -I /usr/local/lib/theseus/deploy_handler.py authorize "$1"

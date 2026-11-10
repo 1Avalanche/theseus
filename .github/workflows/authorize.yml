@@ -1,0 +1,91 @@
+# Предпросмотр без SSH-секретов; разрешение только после approval выбранного Environment.
+name: Authorize release
+run-name: "Разрешение сборки ${{ inputs.build_run_id }} для ${{ inputs.stand }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Числовой ID успешного запуска Build release (из URL)
+        type: string
+        required: true
+      stand:
+        description: Стенд
+        type: choice
+        options: [test, prod]
+        default: test
+
+permissions: {}
+
+concurrency:
+  group: authorize-${{ inputs.stand }}
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == '1Avalanche/theseus' &&
+      github.actor_id == github.repository_owner_id &&
+      github.triggering_actor == github.repository_owner &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      request: ${{ steps.candidate.outputs.request }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Проверить и показать кандидата до approval
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          STAND: ${{ inputs.stand }}
+        run: python3 deploy/handler/release_candidate.py
+
+  authorize:
+    needs: preview
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == '1Avalanche/theseus' &&
+      github.actor_id == github.repository_owner_id &&
+      github.triggering_actor == github.repository_owner &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: ${{ inputs.stand }}
+    steps:
+      - name: Разрешить показанный артефакт на VPS
+        env:
+          REQUEST: ${{ needs.preview.outputs.request }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_AUTHORIZE_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          request = json.loads(os.environ['REQUEST'])
+          assert set(request) == {'action', 'build_run_id', 'artifact_id', 'artifact_digest', 'release'}
+          assert request['action'] == 'authorize'
+          assert all(type(request[k]) is int and request[k] > 0 for k in ('build_run_id', 'artifact_id'))
+          assert re.fullmatch(r'sha256:[0-9a-f]{64}', request['artifact_digest'])
+          assert re.fullmatch(r'[0-9a-f]{40}', request['release'])
+          assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.-]*', os.environ['VPS_HOST'])
+          assert os.environ['VPS_USER'] == 'deploy'
+          pathlib.Path('request.json').write_text(json.dumps(request) + '\n')
+          ssh = pathlib.Path.home() / '.ssh'
+          ssh.mkdir(mode=0o700, exist_ok=True)
+          (ssh / 'id_authorize').write_text(os.environ['VPS_SSH_KEY'] + '\n')
+          (ssh / 'known_hosts').write_text(os.environ['VPS_KNOWN_HOSTS'] + '\n')
+          PY
+          ssh -T -i ~/.ssh/id_authorize -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=3 "$VPS_USER@$VPS_HOST" < request.json

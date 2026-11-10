@@ -3,3 +3,4 @@ Defaults:deploy env_reset
 Defaults:deploy !setenv
 # Стенд привязан к ключу в root-owned authorized_keys, через ssh-entry.
 deploy ALL=(root) NOPASSWD: /usr/bin/python3 -I /usr/local/lib/theseus/deploy_handler.py test, /usr/bin/python3 -I /usr/local/lib/theseus/deploy_handler.py prod
+deploy ALL=(root) NOPASSWD: /usr/bin/python3 -I /usr/local/lib/theseus/deploy_handler.py authorize test, /usr/bin/python3 -I /usr/local/lib/theseus/deploy_handler.py authorize prod
