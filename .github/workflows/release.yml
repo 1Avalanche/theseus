@@ -1,4 +1,4 @@
-# Кандидат не даёт разрешения на запуск: владелец утверждает digest на VPS.
+# Кандидат не разрешает запуск: владелец одобряет его через Authorize release.
 name: Build release
 
 on:
@@ -15,6 +15,12 @@ permissions:
 
 jobs:
   image:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == '1Avalanche/theseus' &&
+      github.actor_id == github.repository_owner_id &&
+      github.triggering_actor == github.repository_owner &&
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -60,7 +66,7 @@ jobs:
               release[module + '_digest'] = digest
           pathlib.Path('release.json').write_text(json.dumps(release, indent=2) + '\n')
           PY
-          echo 'Кандидат готов. Перед деплоем требуется проверка сборки и разрешение на VPS.' >> "$GITHUB_STEP_SUMMARY"
+          echo "Кандидат готов. Authorize release: build_run_id=$GITHUB_RUN_ID. Деплой запускается отдельно." >> "$GITHUB_STEP_SUMMARY"
           cat release.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:

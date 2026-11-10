@@ -27,6 +27,12 @@ concurrency:
 
 jobs:
   deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == '1Avalanche/theseus' &&
+      github.actor_id == github.repository_owner_id &&
+      github.triggering_actor == github.repository_owner &&
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: ${{ inputs.stand }}

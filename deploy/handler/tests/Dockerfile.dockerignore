@@ -2,3 +2,6 @@
 **
 !deploy/
 !deploy/**
+!.github/
+!.github/workflows/
+!.github/workflows/**

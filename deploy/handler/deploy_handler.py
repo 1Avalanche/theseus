@@ -4,6 +4,8 @@
 import contextlib
 import datetime
 import fcntl
+import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -15,7 +17,10 @@ import sys
 import tempfile
 import time
 import urllib.request
+import urllib.error
+import urllib.parse
 import uuid
+import zipfile
 
 ROOT = Path('/opt/theseus')
 DOCKER = '/usr/bin/docker'
@@ -23,6 +28,7 @@ SHA = re.compile(r'[0-9a-f]{40}')
 DIGEST = re.compile(r'sha256:[0-9a-f]{64}')
 VERSION = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}')
 MAX_REQUEST = 1024
+MAX_ARTIFACT = 65536
 
 
 class DeployError(Exception):
@@ -32,6 +38,16 @@ class DeployError(Exception):
 def require(condition, message):
     if not condition:
         raise DeployError(message)
+
+
+def unique_fields(pairs):
+    """Дубли полей JSON не должны менять смысл запроса или разрешения."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('Повтор поля JSON')
+        result[key] = value
+    return result
 
 
 def trusted(path, secret=False):
@@ -52,14 +68,14 @@ def trusted(path, secret=False):
 
 def read_json(path):
     with trusted(path).open() as stream:
-        return json.load(stream)
+        return json.load(stream, object_pairs_hook=unique_fields)
 
 
 def parse_request(raw, stand):
     require(stand in ('test', 'prod'), 'Неизвестный стенд')
     require(len(raw) <= MAX_REQUEST, 'Запрос слишком большой')
     try:
-        request = json.loads(raw)
+        request = json.loads(raw, object_pairs_hook=unique_fields)
     except (ValueError, UnicodeError):
         raise DeployError('Ожидался JSON-запрос') from None
     require(isinstance(request, dict), 'Ожидался объект запроса')
@@ -71,6 +87,35 @@ def parse_request(raw, stand):
     require(isinstance(request['release'], str) and SHA.fullmatch(request['release']),
             'Релиз должен быть полным SHA коммита')
     return request
+
+
+def parse_authorization(raw, stand):
+    require(stand in ('test', 'prod'), 'Неизвестный стенд')
+    require(len(raw) <= MAX_REQUEST, 'Запрос слишком большой')
+    try:
+        request = json.loads(raw, object_pairs_hook=unique_fields)
+    except (ValueError, UnicodeError):
+        raise DeployError('Ожидался JSON-запрос') from None
+    require(isinstance(request, dict) and set(request) == {
+        'action', 'build_run_id', 'artifact_id', 'artifact_digest', 'release'},
+        'Недопустимые поля разрешения')
+    require(request['action'] == 'authorize', 'Недопустимая операция')
+    for key in ('build_run_id', 'artifact_id'):
+        require(type(request[key]) is int and 0 < request[key] < 10 ** 20,
+                'Некорректный идентификатор GitHub')
+    require(isinstance(request['artifact_digest'], str) and
+            DIGEST.fullmatch(request['artifact_digest']), 'Некорректный digest артефакта')
+    require(isinstance(request['release'], str) and SHA.fullmatch(request['release']),
+            'Релиз должен быть полным SHA коммита')
+    return request
+
+
+def validate_authorization_config(config):
+    require(isinstance(config, dict) and set(config) == {'repository_id', 'owner_id'},
+            'Некорректный authorization.json')
+    require(all(type(value) is int and value > 0 for value in config.values()),
+            'Ожидались числовые ID репозитория и владельца')
+    return config
 
 
 def validate_config(config):
@@ -133,6 +178,118 @@ def read_github_token(root):
     require(re.fullmatch(r'GITHUB_TOKEN=[A-Za-z0-9_]+', content),
             'Ожидалась одна строка GITHUB_TOKEN в github.env')
     return content.split('=', 1)[1]
+
+
+def github_archive(url, token):
+    """Скачивает ZIP по одноразовой ссылке GitHub, не передавая ей токен."""
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+    opener = urllib.request.build_opener(NoRedirect)
+    request = urllib.request.Request(url, headers={
+        'Authorization': 'Bearer ' + token, 'User-Agent': 'theseus-authorize',
+        'X-GitHub-Api-Version': '2022-11-28',
+    })
+    try:
+        opener.open(request, timeout=20).close()
+    except urllib.error.HTTPError as error:
+        require(error.code == 302, 'GitHub не выдал ссылку артефакта')
+        location = error.headers.get('Location', '')
+        error.close()
+    else:
+        raise DeployError('Ожидалась ссылка артефакта GitHub')
+    parsed = urllib.parse.urlsplit(location)
+    require(parsed.scheme == 'https' and parsed.port in (None, 443) and
+            not parsed.username and not parsed.password and not parsed.fragment and
+            parsed.hostname is not None and any(parsed.hostname.endswith(suffix) for suffix in
+                ('.blob.core.windows.net', '.actions.githubusercontent.com')),
+            'Недопустимый адрес хранилища артефакта')
+    with opener.open(urllib.request.Request(location), timeout=20) as response:
+        data = response.read(MAX_ARTIFACT + 1)
+    require(len(data) <= MAX_ARTIFACT, 'Артефакт слишком большой')
+    return data
+
+
+def validate_build(run, run_id, identity):
+    """Допускает только успешную ручную сборку владельца из исходного репозитория."""
+    require(run['id'] == run_id and run['event'] == 'workflow_dispatch' and
+            run['status'] == 'completed' and run['conclusion'] == 'success' and
+            run['path'] == '.github/workflows/release.yml' and run['head_branch'] == 'main' and
+            run['repository']['id'] == identity['repository_id'] and
+            run['head_repository']['id'] == identity['repository_id'] and
+            run['actor']['id'] == identity['owner_id'] and
+            run['triggering_actor']['id'] == identity['owner_id'] and
+            isinstance(run['head_sha'], str) and SHA.fullmatch(run['head_sha']),
+            'Сборка не соответствует доверенному происхождению')
+
+
+def load_candidate(config, identity, run_id, token, artifact_id=None, expected_digest=None):
+    """Проверяет происхождение и digest ZIP; содержимое никогда не исполняется."""
+    base = 'https://api.github.com/repos/' + config['repository'] + '/actions/'
+    run = github_json(base + 'runs/' + str(run_id), token)
+    validate_build(run, run_id, identity)
+    if artifact_id is None:
+        listing = github_json(base + 'runs/' + str(run_id) + '/artifacts?per_page=100', token)
+        require(listing['total_count'] <= 100, 'Слишком много артефактов сборки')
+        matches = [item for item in listing['artifacts'] if item['name'] == 'release-candidate']
+        require(len(matches) == 1, 'Нужен один артефакт release-candidate')
+        artifact_id = matches[0]['id']
+    require(type(artifact_id) is int and artifact_id > 0, 'Некорректный ID артефакта')
+    artifact = github_json(base + 'artifacts/' + str(artifact_id), token)
+    origin = artifact['workflow_run']
+    require(artifact['id'] == artifact_id and artifact['name'] == 'release-candidate' and
+            artifact['expired'] is False and 0 < artifact['size_in_bytes'] <= MAX_ARTIFACT and
+            origin['id'] == run_id and origin['repository_id'] == identity['repository_id'] and
+            origin['head_repository_id'] == identity['repository_id'] and
+            origin['head_branch'] == 'main' and origin['head_sha'] == run['head_sha'],
+            'Артефакт не принадлежит доверенной сборке')
+    digest = artifact['digest']
+    require(isinstance(digest, str) and DIGEST.fullmatch(digest) and
+            (expected_digest is None or digest == expected_digest),
+            'Digest артефакта изменился или отсутствует')
+    data = github_archive(base + 'artifacts/' + str(artifact_id) + '/zip', token)
+    require('sha256:' + hashlib.sha256(data).hexdigest() == digest,
+            'Содержимое артефакта не соответствует digest')
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        entries = archive.infolist()
+        require(len(entries) == 1 and entries[0].filename == 'release.json' and
+                0 < entries[0].file_size <= 4096 and not entries[0].flag_bits & 1,
+                'Ожидался только небольшой release.json')
+        release = json.loads(archive.read(entries[0]), object_pairs_hook=unique_fields)
+    require(isinstance(release, dict) and isinstance(release.get('commit'), str) and
+            SHA.fullmatch(release['commit']), 'Некорректный SHA кандидата')
+    validate_release(release, release['commit'], config)
+    # Повторная сборка не должна менять происхождение во время скачивания.
+    current = github_json(base + 'runs/' + str(run_id), token)
+    validate_build(current, run_id, identity)
+    require(current['run_attempt'] == run['run_attempt'] and current['head_sha'] == run['head_sha'],
+            'Сборка изменилась во время проверки')
+    request = {'action': 'authorize', 'build_run_id': run_id, 'artifact_id': artifact_id,
+               'artifact_digest': digest, 'release': release['commit']}
+    return release, request
+
+
+def authorize(root, stand, request):
+    """Вызывается под общей блокировкой; не запускает Docker и не меняет конфигурацию."""
+    config = validate_config(read_json(root / 'config.json'))
+    identity = validate_authorization_config(read_json(root / 'authorization.json'))
+    token = read_github_token(root)
+    try:
+        release, _ = load_candidate(config, identity, request['build_run_id'], token,
+                                    request['artifact_id'], request['artifact_digest'])
+    except Exception:
+        raise DeployError('Не удалось подтвердить доверенный артефакт GitHub') from None
+    require(release['commit'] == request['release'], 'SHA кандидата изменился после approval')
+    if stand == 'prod':
+        verify_main(config, release['commit'], token)
+    path = root / 'releases' / stand / (release['commit'] + '.json')
+    if path.exists() or path.is_symlink():
+        require(read_json(path) == release, 'Этот SHA уже разрешён с другими образами')
+    else:
+        atomic_write(path, json.dumps(release, sort_keys=True) + '\n')
+    print(stand + ': разрешён релиз ' + release['commit'] +
+          ', сборка ' + str(request['build_run_id']) +
+          ', артефакт ' + str(request['artifact_id']), flush=True)
 
 
 def atomic_write(path, content):
@@ -284,19 +441,25 @@ class Deployer:
 def main():
     try:
         require(os.geteuid() == 0, 'Обработчик запускается только через разрешённый sudo')
-        require(len(sys.argv) == 2 and sys.argv[1] in ('test', 'prod'), 'Ожидался фиксированный стенд')
+        authorizing = len(sys.argv) == 3 and sys.argv[1] == 'authorize'
+        require((len(sys.argv) == 2 or authorizing) and sys.argv[-1] in ('test', 'prod'),
+                'Ожидался фиксированный стенд')
+        stand = sys.argv[-1]
         os.umask(0o077)
         def expired(signum, frame):
             raise DeployError('Истёк срок чтения запроса')
         signal.signal(signal.SIGALRM, expired)
         signal.alarm(10)
         try:
-            request = parse_request(sys.stdin.buffer.read(MAX_REQUEST + 1), sys.argv[1])
+            parser = parse_authorization if authorizing else parse_request
+            request = parser(sys.stdin.buffer.read(MAX_REQUEST + 1), stand)
         finally:
             signal.alarm(0)
         with deployment_lock(ROOT):
-            deployer = Deployer(ROOT, sys.argv[1])
-            if request['action'] == 'stop':
+            deployer = Deployer(ROOT, stand)
+            if authorizing:
+                authorize(ROOT, stand, request)
+            elif request['action'] == 'stop':
                 deployer.stop()
             else:
                 deployer.deploy(request['release'])

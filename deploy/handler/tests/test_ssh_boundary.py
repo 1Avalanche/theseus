@@ -31,12 +31,17 @@ class SshBoundaryTests(unittest.TestCase):
         shutil.copy(cls.source / 'handler/deploy_handler.py', '/usr/local/lib/theseus/deploy_handler.py')
         shutil.copy(cls.source / 'ssh/ssh-entry', '/usr/local/lib/theseus/ssh-entry')
         Path('/usr/local/lib/theseus/ssh-entry').chmod(0o755)
+        shutil.copy(cls.source / 'ssh/ssh-authorize-entry', '/usr/local/lib/theseus/ssh-authorize-entry')
+        Path('/usr/local/lib/theseus/ssh-authorize-entry').chmod(0o755)
         shutil.copy(cls.source / 'ssh/theseus-deploy.sudoers', '/etc/sudoers.d/theseus-deploy')
         Path('/etc/sudoers.d/theseus-deploy').chmod(0o440)
         command('visudo', '-cf', '/etc/sudoers.d/theseus-deploy')
         shutil.copy(cls.source / 'vps/docker-compose.yml', cls.root / 'docker-compose.yml')
         (cls.root / 'config.json').write_text(json.dumps({
             'repository': 'Owner/theseus', 'registry': 'ghcr.io/owner', 'config_version': '1'}))
+        (cls.root / 'authorization.json').write_text(json.dumps({'repository_id': 10, 'owner_id': 20}))
+        (cls.root / 'github.env').write_text('GITHUB_TOKEN=fake\n')
+        (cls.root / 'github.env').chmod(0o600)
         for name in ('test/stand.env', 'prod/stand.env', 'docker/config.json'):
             (cls.root / name).write_text('{}')
             (cls.root / name).chmod(0o600)
@@ -44,6 +49,38 @@ class SshBoundaryTests(unittest.TestCase):
         release = {'commit': cls.sha, 'config_version': '1', 'core_digest': 'sha256:' + '1' * 64,
                    'agent_digest': 'sha256:' + '2' * 64}
         (cls.root / 'releases/test' / (cls.sha + '.json')).write_text(json.dumps(release))
+        # Ответы GitHub заменены только в root-owned копии одноразового контейнера.
+        import hashlib
+        import io
+        import zipfile
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, 'w') as stream:
+            stream.writestr('release.json', json.dumps(release))
+        (cls.root / 'candidate.zip').write_bytes(archive.getvalue())
+        cls.authorization = {'action': 'authorize', 'build_run_id': 30, 'artifact_id': 40,
+                             'artifact_digest': 'sha256:' + hashlib.sha256(archive.getvalue()).hexdigest(),
+                             'release': cls.sha}
+        run = {'id': 30, 'event': 'workflow_dispatch', 'status': 'completed', 'conclusion': 'success',
+               'path': '.github/workflows/release.yml', 'head_branch': 'main', 'head_sha': cls.sha,
+               'repository': {'id': 10}, 'head_repository': {'id': 10}, 'actor': {'id': 20},
+               'triggering_actor': {'id': 20}, 'run_attempt': 1}
+        artifact = {'id': 40, 'name': 'release-candidate', 'expired': False,
+                    'digest': cls.authorization['artifact_digest'], 'size_in_bytes': len(archive.getvalue()),
+                    'workflow_run': {'id': 30, 'repository_id': 10, 'head_repository_id': 10,
+                                     'head_branch': 'main', 'head_sha': cls.sha}}
+        (cls.root / 'github-fixture.json').write_text(json.dumps({'run': run, 'artifact': artifact}))
+        installed = Path('/usr/local/lib/theseus/deploy_handler.py')
+        fake_api = '''
+def github_json(url, token):
+    fixture = json.loads((ROOT / 'github-fixture.json').read_text())
+    if '/compare/' in url:
+        return {'status': 'identical', 'merge_base_commit': {'sha': fixture['run']['head_sha']}}
+    return fixture['artifact'] if '/artifacts/' in url else fixture['run']
+def github_archive(url, token):
+    return (ROOT / 'candidate.zip').read_bytes()
+'''
+        installed.write_text(installed.read_text().replace("if __name__ == '__main__':",
+                                                           fake_api + "\nif __name__ == '__main__':"))
         # Замена только в одноразовом контейнере: проверяет точный привилегированный argv.
         Path('/usr/bin/docker').write_text('''#!/usr/bin/python3
 import json, sys
@@ -55,10 +92,12 @@ if sys.argv[1] == 'exec': print('PGDMP-fake')
         Path('/usr/bin/docker').chmod(0o755)
         Path('/etc/ssh/theseus').mkdir()
         keys = []
-        for stand in ('test', 'prod'):
+        for stand in ('test', 'prod', 'authorize-test', 'authorize-prod'):
             command('ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', '/root/key-' + stand)
             public = Path('/root/key-' + stand + '.pub').read_text().strip()
-            keys.append('restrict,command="/usr/local/lib/theseus/ssh-entry ' + stand + '" ' + public)
+            entry = ('ssh-authorize-entry ' + stand.removeprefix('authorize-')
+                     if stand.startswith('authorize-') else 'ssh-entry ' + stand)
+            keys.append('restrict,command="/usr/local/lib/theseus/' + entry + '" ' + public)
         Path('/etc/ssh/theseus/authorized_keys').write_text('\n'.join(keys) + '\n')
         Path('/etc/ssh/theseus/authorized_keys').chmod(0o644)
         Path('/run/sshd').mkdir(exist_ok=True)
@@ -91,10 +130,40 @@ if sys.argv[1] == 'exec': print('PGDMP-fake')
         return subprocess.run(args, input=raw, capture_output=True, timeout=20)
 
     def test_remote_shell_and_sftp_requests_are_rejected(self):
-        for command in ('id', 'sudo /bin/sh', 'internal-sftp', 'scp -t /tmp/x'):
-            result = self.ssh('test', b'', command)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('SSH-команда запрещена', result.stderr.decode())
+        for key in ('test', 'authorize-test', 'authorize-prod'):
+            for command in ('id', 'sudo /bin/sh', 'internal-sftp', 'scp -t /tmp/x'):
+                result = self.ssh(key, b'', command)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('SSH-команда запрещена', result.stderr.decode())
+
+    def test_authorizer_keys_cannot_deploy_stop_or_choose_stand(self):
+        for key in ('authorize-test', 'authorize-prod'):
+            for request in ({'action': 'deploy', 'release': self.sha}, {'action': 'stop'},
+                            dict(self.authorization, stand='prod')):
+                result = self.ssh(key, request)
+                self.assertNotEqual(result.returncode, 0)
+        for key in ('test', 'prod'):
+            self.assertNotEqual(self.ssh(key, self.authorization).returncode, 0)
+
+    def test_authorizer_pins_stand_preserves_docker_and_shares_lock(self):
+        calls = self.root / 'docker-calls.jsonl'
+        before = calls.read_bytes() if calls.exists() else b''
+        for key in ('authorize-test', 'authorize-prod'):
+            result = self.ssh(key, self.authorization)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertIn('разрешён релиз', result.stdout.decode())
+        self.assertEqual(calls.read_bytes() if calls.exists() else b'', before)
+        path = self.root / 'releases/prod' / (self.sha + '.json')
+        self.assertEqual(path.stat().st_uid, 0)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        import fcntl
+        with (self.root / 'deploy.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            for key, request in (('authorize-test', self.authorization),
+                                 ('test', {'action': 'deploy', 'release': self.sha})):
+                result = self.ssh(key, request)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Другая операция', result.stderr.decode())
 
     def test_test_key_cannot_select_prod_or_deploy_prod_only_release(self):
         result = self.ssh('test', {'action': 'deploy', 'release': self.sha, 'stand': 'prod'})
