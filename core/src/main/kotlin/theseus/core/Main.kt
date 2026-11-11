@@ -1,6 +1,7 @@
 package theseus.core
 
 import dev.inmo.tgbotapi.bot.ktor.telegramBot
+import dev.inmo.tgbotapi.bot.settings.limiters.RequestLimiter
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import kotlinx.coroutines.CoroutineScope
@@ -15,6 +16,8 @@ import theseus.core.adapters.http.HttpDependencies
 import theseus.core.adapters.http.coreModule
 import theseus.core.adapters.mcp.McpServerFactory
 import theseus.core.adapters.mcp.ReminderTools
+import theseus.core.adapters.monitoring.CoreMonitor
+import theseus.core.adapters.monitoring.DeliverySignal
 import theseus.core.adapters.telegram.TelegramLogging
 import theseus.core.adapters.telegram.TelegramNotifier
 import theseus.core.application.ReminderScheduler
@@ -42,10 +45,19 @@ fun main() {
     val users = UserService(userRepository)
     val reminders = ReminderService(reminderRepository, users, WhenResolver(config.defaultTime), clock)
     TelegramLogging.install()
-    val notifier = TelegramNotifier(telegramBot(config.telegramBotToken))
+    val deliverySignal = DeliverySignal(clock)
+    val bot =
+        telegramBot(config.telegramBotToken) {
+            requestsLimiter =
+                object : RequestLimiter {
+                    override suspend fun <T> limit(block: suspend () -> T): T = block()
+                }
+        }
+    val notifier = TelegramNotifier(bot, clock, deliverySignal)
     val scheduler = ReminderScheduler(reminderRepository, userRepository, notifier, texts, clock, config.lateThreshold)
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    scheduler.start(scope, config.schedulerInterval)
+    val schedulerJob = scheduler.start(scope, config.schedulerInterval)
+    CoreMonitor(clock, database, reminderRepository, scheduler, schedulerJob, deliverySignal).start(scope)
 
     val deps =
         HttpDependencies(

@@ -16,6 +16,7 @@ import theseus.core.domain.user.UserStatus
 import theseus.core.texts.Texts
 import java.time.Clock
 import java.time.Duration
+import java.time.Instant
 import java.time.LocalDateTime
 
 /**
@@ -36,6 +37,11 @@ class ReminderScheduler(
     private val batchSize: Int = DEFAULT_BATCH_SIZE,
 ) {
     private val log = LoggerFactory.getLogger(ReminderScheduler::class.java)
+
+    /** Последний завершённый проход, включая пустую очередь; не обновляется отдельным таймером. */
+    @Volatile
+    var lastSuccessAt: Instant? = null
+        private set
 
     fun start(
         scope: CoroutineScope,
@@ -71,6 +77,7 @@ class ReminderScheduler(
                 log.error("Не удалось обработать напоминание {}", reminder.id, e)
             }
         }
+        lastSuccessAt = clock.instant()
         return processed
     }
 

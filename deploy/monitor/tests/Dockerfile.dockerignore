@@ -1,0 +1,5 @@
+**
+!deploy/
+!deploy/monitor/
+!deploy/monitor/**
+**/__pycache__/

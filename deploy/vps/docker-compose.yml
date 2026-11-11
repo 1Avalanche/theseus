@@ -60,8 +60,8 @@ services:
     networks:
       - stand
     healthcheck:
-      # Пульс агента (getMe раз в 30 с) обновляет файл; старше 120 с — нездоров.
-      test: ["CMD-SHELL", "test -f /tmp/theseus-agent.health && test $$(( $$(date +%s) - $$(stat -c %Y /tmp/theseus-agent.health) )) -lt 120"]
+      # Файл хранит время последнего успешного getUpdates, включая пустой ответ; порог 10 минут.
+      test: ["CMD-SHELL", "test -f /tmp/theseus-agent.health && test $$(( $$(date +%s) - $$(stat -c %Y /tmp/theseus-agent.health) )) -lt 600"]
       interval: 30s
       timeout: 5s
       retries: 3

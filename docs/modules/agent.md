@@ -13,10 +13,13 @@ Telegram-бот (long polling) и LLM-пайплайн через OpenRouter. А
 | `llm` | порт `LlmClient`; `OpenRouterClient` — запрос с `models` (fallback по порядку из `THESEUS_LLM_MAIN_MODELS`) и `provider.data_collection = deny` |
 | `prompt` | `PromptBuilder`: системный промпт из блоков `persona/siri.md` → `persona/siri-facts.md` → `prompts/rules.md` → `prompts/context.md` (имя, род, локальное время и таймзона пользователя; стабильные блоки первыми — для prompt caching) |
 | `pipeline` | `MessageHandler` (обработка сообщения), `ReplyRenderer` (подтверждение по результату core), `DialogReplies` (команды и готовые ответы локального диалога) |
-| `telegram` | `TelegramBotRunner` — long polling, личные чаты, мьютекс на chatId; `HealthHeartbeat` — пульс для healthcheck (`getMe` раз в 30 с, файл `THESEUS_HEALTH_FILE`) |
+| `telegram` | `TelegramBotRunner` — long polling, личные чаты, мьютекс на chatId; `MonitoredTelegramBot` наблюдает запросы Telegram и повторяет polling с паузой при ошибке |
+| `monitoring` | `AgentMonitor` — локальный снимок состояния polling, ошибок Telegram/OpenRouter и пульс healthcheck от успешного `getUpdates` |
 | `texts` | загрузка `texts/agent.properties` |
 
 JSON-кодек `OpenRouterClient` использует `encodeDefaults = true`: обязательное протокольное поле `type: "function"` сохраняется в описаниях `tools` и истории `tool_calls`, даже когда это значение по умолчанию Kotlin-модели. HTTP-регрессии на Ktor `MockEngine` проверяют фактически сериализованное тело исходящего запроса для обоих случаев, включая связь `tool_call_id`. Это проверка границы HTTP-клиента без обращения к реальному OpenRouter. Схема инструментов MCP отдельно сериализуется SDK с обязательным `type: "object"`; обнаруженный дефект касается исходящего JSON OpenRouter.
+
+Снимок `/tmp/theseus-agent.monitor.json` обновляется каждые 30 секунд и не содержит тексты сообщений. Успешный пустой ответ `getUpdates` тоже обновляет пульс; отсутствие пользовательских сообщений не считается отказом. Инструкция по мониторингу — [monitoring.md](../monitoring.md).
 
 ## Поток сообщения (этап 2)
 

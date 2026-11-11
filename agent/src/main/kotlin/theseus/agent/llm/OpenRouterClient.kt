@@ -8,12 +8,16 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import theseus.agent.monitoring.DependencySignal
+import java.time.Clock
 import java.time.Duration
 
 /**
@@ -26,20 +30,36 @@ class OpenRouterClient(
     private val apiKey: String,
     private val models: List<String>,
     private val timeout: Duration,
+    private val signal: DependencySignal = DependencySignal(Clock.systemUTC()),
 ) : LlmClient {
     override suspend fun complete(request: LlmRequest): LlmResponse {
-        val body = json.encodeToString(toWire(request))
-        val response =
-            http.post("$baseUrl/chat/completions") {
-                bearerAuth(apiKey)
-                header("X-Title", "Theseus")
-                contentType(ContentType.Application.Json)
-                setBody(body)
-                timeout { requestTimeoutMillis = timeout.toMillis() }
-            }
-        val text = response.bodyAsText()
-        if (!response.status.isSuccess()) throw LlmException("OpenRouter ${response.status.value}")
-        return parse(text)
+        var failureCode = "network_or_response"
+        try {
+            val body = json.encodeToString(toWire(request))
+            val response =
+                http.post("$baseUrl/chat/completions") {
+                    bearerAuth(apiKey)
+                    header("X-Title", "Theseus")
+                    contentType(ContentType.Application.Json)
+                    setBody(body)
+                    timeout { requestTimeoutMillis = timeout.toMillis() }
+                }
+            if (!response.status.isSuccess()) failureCode = response.status.value.toString()
+            val text = response.bodyAsText()
+            checkStatus(response.status)
+            return parse(text).also { signal.success() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (
+            @Suppress("TooGenericExceptionCaught") e: Exception,
+        ) {
+            signal.failure(failureCode)
+            throw e
+        }
+    }
+
+    private fun checkStatus(status: HttpStatusCode) {
+        if (!status.isSuccess()) throw LlmException("OpenRouter HTTP ${status.value}")
     }
 
     internal fun toWire(request: LlmRequest) =

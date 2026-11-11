@@ -3,12 +3,16 @@ package theseus.core.adapters.db
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.count
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.min
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
+import theseus.core.application.DeliveryBacklog
 import theseus.core.application.ReminderRepository
 import theseus.core.domain.reminder.DeliveryRecord
 import theseus.core.domain.reminder.NewReminder
@@ -20,6 +24,19 @@ import java.time.ZoneId
 class ExposedReminderRepository(
     private val db: CoreDatabase,
 ) : ReminderRepository {
+    override suspend fun deliveryBacklog(now: Instant): DeliveryBacklog =
+        db.tx {
+            val oldest = RemindersTable.nextFireAt.min()
+            val count = RemindersTable.id.count()
+            val row =
+                RemindersTable
+                    .select(count, oldest)
+                    .where {
+                        (RemindersTable.status eq ReminderStatus.ACTIVE.name) and (RemindersTable.nextFireAt lessEq now.toUtc())
+                    }.single()
+            DeliveryBacklog(row[count], row[oldest]?.toInstant())
+        }
+
     override suspend fun create(
         reminder: NewReminder,
         now: Instant,

@@ -83,6 +83,40 @@ class RepositoriesIntegrationTest {
         }
 
     @Test
+    fun `backlog aggregates all due reminders beyond scheduler batch and excludes completed and future`() =
+        runTest {
+            val user = users.ensureAdmin(admin.copy(chatId = 9898), now)
+            val at = now.minusSeconds(100_000)
+            val initial = reminders.deliveryBacklog(at)
+            val due =
+                (1..105).map { index ->
+                    reminders.create(
+                        NewReminder(
+                            user.id,
+                            "Служебная проверка",
+                            ZoneId.of("UTC"),
+                            LocalDateTime.of(2026, 11, 1, 0, 0),
+                            at.minusSeconds(index.toLong()),
+                        ),
+                        now,
+                    )
+                }
+            val future =
+                reminders.create(
+                    NewReminder(user.id, "Будущее", ZoneId.of("UTC"), LocalDateTime.of(2026, 12, 1, 0, 0), at.plusSeconds(1)),
+                    now,
+                )
+            try {
+                reminders.completeOneTime(due.first(), null, now)
+                val backlog = reminders.deliveryBacklog(at)
+                assertEquals(initial.count + 104, backlog.count)
+                assertEquals(at.minusSeconds(105), backlog.oldestDueAt)
+            } finally {
+                (due + future).forEach { reminders.completeOneTime(it, null, now) }
+            }
+        }
+
+    @Test
     fun `completing occurrence twice records one delivery and closes reminder`() =
         runTest {
             val user = users.ensureAdmin(admin, now)
