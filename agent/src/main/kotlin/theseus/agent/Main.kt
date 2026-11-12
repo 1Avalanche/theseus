@@ -1,7 +1,5 @@
 package theseus.agent
 
-import dev.inmo.tgbotapi.bot.ktor.telegramBot
-import dev.inmo.tgbotapi.bot.settings.limiters.RequestLimiter
 import dev.inmo.tgbotapi.extensions.api.bot.getMe
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
@@ -22,6 +20,7 @@ import theseus.agent.prompt.PromptBuilder
 import theseus.agent.telegram.MonitoredTelegramBot
 import theseus.agent.telegram.TelegramBotRunner
 import theseus.agent.telegram.TelegramLogging
+import theseus.agent.telegram.createTelegramBot
 import theseus.agent.texts.Texts
 import java.time.Clock
 import java.time.Duration
@@ -47,14 +46,7 @@ fun main() {
     val handler =
         MessageHandler(core, llm, PromptBuilder.fromResources(texts), ReplyRenderer(texts), texts, clock)
     TelegramLogging.install()
-    val rawBot =
-        telegramBot(config.telegramBotToken) {
-            // Повторы наблюдает наш адаптер; скрытые повторы библиотеки маскируют ошибки и зависания.
-            requestsLimiter =
-                object : RequestLimiter {
-                    override suspend fun <T> limit(block: suspend () -> T): T = block()
-                }
-        }
+    val rawBot = createTelegramBot(config.telegramBotToken)
     val bot = MonitoredTelegramBot(rawBot, monitor)
 
     runBlocking {
