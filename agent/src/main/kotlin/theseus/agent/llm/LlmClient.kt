@@ -32,6 +32,8 @@ data class LlmRequest(
 data class LlmUsage(
     val tokensIn: Int,
     val tokensOut: Int,
+    val tokensCached: Int = 0,
+    val costUsd: String? = null,
 )
 
 data class LlmResponse(
@@ -39,6 +41,8 @@ data class LlmResponse(
     /** Фактическая модель после fallback. */
     val model: String,
     val usage: LlmUsage?,
+    val generationId: String? = null,
+    val latencyMs: Int? = null,
 )
 
 /** Порт к LLM. В юнит-тестах — только фейк с заготовленными ответами. */

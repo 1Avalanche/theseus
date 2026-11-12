@@ -3,9 +3,15 @@ package theseus.agent.core
 import io.ktor.client.HttpClient
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.request
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
 import io.modelcontextprotocol.kotlin.sdk.client.Client
 import io.modelcontextprotocol.kotlin.sdk.client.mcpStreamableHttp
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
@@ -20,6 +26,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import theseus.agent.system.RestReply
+import theseus.agent.system.SystemCore
+import java.util.UUID
 
 /**
  * REST и MCP core по внутренней сети. MCP-клиент один на процесс; сервер без сессий,
@@ -29,10 +38,31 @@ class HttpCoreClient(
     private val http: HttpClient,
     private val baseUrl: String,
     private val serviceToken: String,
-) : CoreClient {
+) : CoreClient,
+    SystemCore {
     private val json = Json { ignoreUnknownKeys = true }
     private val mcpLock = Mutex()
     private var mcp: Client? = null
+
+    override suspend fun request(
+        method: String,
+        path: String,
+        body: JsonObject?,
+        operationId: UUID?,
+    ): RestReply {
+        require(path.startsWith("/") && !path.startsWith("//"))
+        val response =
+            http.request("$baseUrl/internal/v1$path") {
+                this.method = HttpMethod.parse(method)
+                bearerAuth(serviceToken)
+                operationId?.let { header("Idempotency-Key", it.toString()) }
+                if (body != null) {
+                    contentType(ContentType.Application.Json)
+                    setBody(body.toString())
+                }
+            }
+        return RestReply(response.status.value, json.parseToJsonElement(response.bodyAsText()).jsonObject)
+    }
 
     override suspend fun findUserByChat(chatId: Long): CoreUser? {
         val response = http.get("$baseUrl/internal/v1/users/by-chat/$chatId") { bearerAuth(serviceToken) }

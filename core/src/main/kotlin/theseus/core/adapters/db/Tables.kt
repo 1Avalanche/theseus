@@ -17,7 +17,36 @@ internal object UsersTable : Table("users") {
     val createdAt = timestampWithTimeZone("created_at")
     val updatedAt = timestampWithTimeZone("updated_at")
     val onboardedAt = timestampWithTimeZone("onboarded_at").nullable()
+    val revokedAt = timestampWithTimeZone("revoked_at").nullable()
 
+    override val primaryKey = PrimaryKey(id)
+}
+
+internal object InvitesTable : Table("invites") {
+    val id = long("id").autoIncrement()
+    val codeHash = text("code_hash")
+    val gender = text("gender")
+    val label = text("label").nullable()
+    val createdAt = timestampWithTimeZone("created_at")
+    val expiresAt = timestampWithTimeZone("expires_at")
+    val usedAt = timestampWithTimeZone("used_at").nullable()
+    val usedByUserId = long("used_by_user_id").nullable()
+    val revokedAt = timestampWithTimeZone("revoked_at").nullable()
+    override val primaryKey = PrimaryKey(id)
+}
+
+internal object UsageTable : Table("llm_usage") {
+    val id = long("id").autoIncrement()
+    val userId = long("user_id")
+    val role = text("role")
+    val model = text("model")
+    val generationId = text("generation_id").nullable()
+    val tokensIn = integer("tokens_in")
+    val tokensOut = integer("tokens_out")
+    val tokensCached = integer("tokens_cached")
+    val costUsd = decimal("cost_usd", 12, 8)
+    val latencyMs = integer("latency_ms").nullable()
+    val createdAt = timestampWithTimeZone("created_at")
     override val primaryKey = PrimaryKey(id)
 }
 

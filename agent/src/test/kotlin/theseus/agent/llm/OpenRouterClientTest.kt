@@ -98,7 +98,8 @@ class OpenRouterClientTest {
 
             assertEquals("google/gemini-3.1-flash-lite", response.model)
             assertEquals(ToolCall("call_1", "create_reminder", """{"text":"X"}"""), response.message.toolCalls.single())
-            assertEquals(LlmUsage(2100, 85), response.usage)
+            assertEquals(LlmUsage(2100, 85, costUsd = "0.0002"), response.usage)
+            assertEquals("gen-1", response.generationId)
         }
 
     @Test

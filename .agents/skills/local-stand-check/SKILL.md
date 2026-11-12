@@ -12,7 +12,7 @@ description: Локальная проверка стенда Theseus в Docker 
 - `./gradlew build installDist` — зелёный.
 - tmp-файлы создавай доступным инструментом записи или скриптом вне репозитория; файлы проекта меняй через `apply_patch`:
   - `infra.env` — 5 паролей из `deploy/env/infra.env.example` любыми значениями;
-  - `stand/test/stand.env` — по `deploy/env/stand.env.example`: `THESEUS_STAND=test`, heap 128m, лимиты 300m, `THESEUS_CORE_DB_PASSWORD` = test core из infra.env, токен ≥ 32 символов, фиктивный бот-токен `123456:fake`;
+  - `stand/test/stand.env` — по `deploy/env/stand.env.example`: `THESEUS_STAND=test`, heap 128m, лимиты 300m, пароли `THESEUS_CORE_DB_PASSWORD` и `THESEUS_AGENT_DB_PASSWORD` = соответствующие test-роли из infra.env, `THESEUS_JOURNAL_KEY` — 64 случайных hex-символа, сервисный токен ≥ 32 символов, фиктивный бот-токен `123456:fake`;
   - `stand/test/image.env` — `THESEUS_STAND=test`, `THESEUS_CORE_IMAGE=local/theseus-core:abc1234`, `THESEUS_AGENT_IMAGE=local/theseus-agent:abc1234`. Для проверки digest взять соответствующие ссылки из `docker image inspect --format '{{json .RepoDigests}}'` и заменить значения. В серверном обработчике разрешены только digest из root-approved релиза, локальные теги ему не передавать.
 
 ## 2. Infra
@@ -32,7 +32,9 @@ docker compose -p theseus-test -f deploy/vps/docker-compose.yml --env-file <tmp>
 ```
 Проверить:
 - `theseus-test-core` → `healthy`; `docker exec theseus-test-core curl -s localhost:8080/health`.
-- REST без токена → 401; с `Authorization: Bearer <токен>` → `/internal/v1/users/by-chat/<THESEUS_ADMIN_CHAT_ID>` = админ `active`.
+- REST без токена → 401; с `Authorization: Bearer <токен>` → `/internal/v1/users/by-chat/<THESEUS_ADMIN_CHAT_ID>` = админ. Новый профиль — `onboarding`; существующий не сбрасывается. При необходимости завершить новый профиль через `PATCH /internal/v1/users/<id>` с `name` и `timezone`; нужен отдельный UUID `Idempotency-Key`. После этого профиль `active`.
+- Проверить `POST /invites` с UUID-ключом: первый ответ содержит код; повтор с тем же ключом — квитанция без кода. Проверить активацию, профиль и запрет повтора изменения после отзыва доступа. Не печатать реальные секреты в вывод.
+- После старта агента проверить миграции `agent` и изоляцию ролей: агент читает свой журнал, не может читать `core.users`; core не читает журнал agent. С фиктивным Telegram-токеном миграции выполняются до ожидаемого отказа `getMe`.
 - MCP: `POST /mcp` (`Accept: application/json, text/event-stream`) с `tools/call` `create_reminder`, `after.minutes=1`, `_meta.theseus/user_id` = id админа → `"status":"created"`.
 - Через ~1 мин в логах core — «не доставлено… 401» (планировщик сработал).
 - agent с фиктивным токеном падает на старте с `UnauthorizedException` и перезапускается — это ожидаемо.

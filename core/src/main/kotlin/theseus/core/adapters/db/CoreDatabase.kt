@@ -7,6 +7,7 @@ import kotlinx.coroutines.withContext
 import org.flywaydb.core.Flyway
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import theseus.core.application.HealthProbe
 import theseus.core.config.DatabaseConfig
@@ -39,6 +40,10 @@ class CoreDatabase(
         withContext(Dispatchers.IO) {
             transaction(database) { block() }
         }
+
+    /** Корутиная транзакция передаёт контекст всем вложенным обращениям к репозиториям. */
+    internal suspend fun <T> atomic(block: suspend JdbcTransaction.() -> T): T =
+        withContext(Dispatchers.IO) { suspendTransaction(database) { block() } }
 
     override suspend fun isHealthy(): Boolean =
         withContext(Dispatchers.IO) {

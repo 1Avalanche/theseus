@@ -51,16 +51,16 @@ class RepositoriesIntegrationTest {
     }
 
     @Test
-    fun `ensure admin is idempotent and creates active admin`() =
+    fun `ensure admin is idempotent and creates onboarding admin`() =
         runTest {
             val first = users.ensureAdmin(admin, now)
             val second = users.ensureAdmin(admin.copy(name = "Другое имя"), now.plusSeconds(60))
 
             assertEquals(first.id, second.id)
-            assertEquals("Аня", second.name)
+            assertNull(second.name)
             assertEquals(UserRole.ADMIN, second.role)
-            assertEquals(UserStatus.ACTIVE, second.status)
-            assertEquals(ZoneId.of("Asia/Yekaterinburg"), second.timezone)
+            assertEquals(UserStatus.ONBOARDING, second.status)
+            assertNull(second.timezone)
             assertEquals(first, users.findByChatId(4242))
         }
 

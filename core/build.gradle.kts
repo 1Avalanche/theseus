@@ -43,6 +43,8 @@ testing {
                 implementation(libs.testcontainers.junit)
                 implementation(libs.exposed.core)
                 implementation(libs.exposed.jdbc)
+                implementation(libs.ktor.server.test.host)
+                implementation(libs.kotlinx.serialization.json)
                 runtimeOnly(libs.logback)
             }
             targets.all {

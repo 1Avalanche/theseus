@@ -28,6 +28,7 @@ class HttpDependencies(
     val health: HealthProbe,
     val users: UserService,
     val mcpServer: Server,
+    val accounts: AccountsRoutes? = null,
 )
 
 fun Application.coreModule(deps: HttpDependencies) {
@@ -35,6 +36,7 @@ fun Application.coreModule(deps: HttpDependencies) {
     // Порт core наружу не публикуется: агент ходит по имени контейнера, защита от DNS rebinding не нужна.
     mcpStatelessStreamableHttp(path = "/mcp", enableDnsRebindingProtection = false) { deps.mcpServer }
     routing {
+        deps.accounts?.install(this)
         get("/health") {
             if (deps.health.isHealthy()) {
                 call.respondJson(HttpStatusCode.OK, """{"status":"ok"}""")
