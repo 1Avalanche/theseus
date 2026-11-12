@@ -59,7 +59,7 @@ jobs:
           done
           python3 - "$sha" <<'PY'
           import json, pathlib, re, sys
-          release = {'commit': sys.argv[1], 'config_version': '1'}
+          release = {'commit': sys.argv[1], 'config_version': '2'}
           for module in ('core', 'agent'):
               digest = json.loads(pathlib.Path(module + '-metadata.json').read_text())['containerimage.digest']
               assert re.fullmatch(r'sha256:[0-9a-f]{64}', digest)

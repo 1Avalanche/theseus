@@ -9,6 +9,8 @@
     <logger name="io.ktor" level="WARN"/>
     <logger name="io.modelcontextprotocol" level="WARN"/>
     <logger name="KSLog" level="WARN"/>
+    <logger name="com.zaxxer.hikari" level="WARN"/>
+    <logger name="org.flywaydb" level="WARN"/>
 
     <root level="${THESEUS_LOG_LEVEL:-INFO}">
         <appender-ref ref="STDOUT"/>

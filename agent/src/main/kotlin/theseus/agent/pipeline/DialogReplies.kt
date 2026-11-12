@@ -7,6 +7,7 @@ import kotlinx.serialization.json.jsonObject
 import theseus.agent.core.CoreUser
 import theseus.agent.core.ToolResult
 import theseus.agent.llm.ToolDefinition
+import theseus.agent.system.BuildInfo
 import theseus.agent.texts.Texts
 
 /** Готовые ответы: модель выбирает тему, код проверяет её и подставляет ресурсный текст. */
@@ -37,6 +38,7 @@ class DialogReplies(
         when (text.trim().takeWhile { !it.isWhitespace() }.substringBefore('@')) {
             "/start" -> welcome(user)
             "/help" -> texts.get("reply.capabilities")
+            "/version" -> texts.get("reply.version", mapOf("version" to BuildInfo.version))
             else -> null
         }
 

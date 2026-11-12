@@ -10,8 +10,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import theseus.core.adapters.db.CoreDatabase
+import theseus.core.adapters.db.DatabaseOperations
 import theseus.core.adapters.db.ExposedReminderRepository
 import theseus.core.adapters.db.ExposedUserRepository
+import theseus.core.adapters.http.AccountsRoutes
 import theseus.core.adapters.http.HttpDependencies
 import theseus.core.adapters.http.coreModule
 import theseus.core.adapters.mcp.McpServerFactory
@@ -20,6 +22,7 @@ import theseus.core.adapters.monitoring.CoreMonitor
 import theseus.core.adapters.monitoring.DeliverySignal
 import theseus.core.adapters.telegram.TelegramLogging
 import theseus.core.adapters.telegram.TelegramNotifier
+import theseus.core.application.AccountsService
 import theseus.core.application.ReminderScheduler
 import theseus.core.application.ReminderService
 import theseus.core.application.UserService
@@ -65,6 +68,7 @@ fun main() {
             health = database,
             users = users,
             mcpServer = McpServerFactory.create(ReminderTools(reminders, texts)),
+            accounts = AccountsRoutes(AccountsService(userRepository, clock, config.inviteTtl), DatabaseOperations(database), clock),
         )
     log.info("core слушает порт {}", config.httpPort)
     embeddedServer(Netty, port = config.httpPort) { coreModule(deps) }.start(wait = true)

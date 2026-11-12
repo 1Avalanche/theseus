@@ -16,21 +16,24 @@ import theseus.agent.llm.Role
 import theseus.agent.llm.ToolCall
 import theseus.agent.llm.ToolDefinition
 import theseus.agent.prompt.PromptBuilder
+import theseus.agent.system.NoUsageRecorder
+import theseus.agent.system.UsageRecorder
 import theseus.agent.texts.Texts
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
+import java.util.UUID
 
 /**
  * Обработка одного входящего текстового сообщения (v1: один агент с инструментами).
  *
  * 1. Пользователь ищется в core **до** LLM: незнакомый или неактивный chatId — без ответа и без вызова модели.
- * 2. /start и /help отвечают шаблонами без LLM. Остальные запросы получают инструменты core и локального диалога.
+ * 2. /start, /help и /version отвечают шаблонами без LLM. Остальные запросы получают инструменты core и локального диалога.
  * 3. Вызовы инструментов уходят в core с `userId` в `_meta`. Успех — ответ кодом по шаблону;
  *    ошибка или нераспознанный результат — результат возвращается модели для исправления аргументов.
  *    Текст модели не подтверждает выполнение: без результата core ответ формируется по безопасному шаблону.
  *
- * Этап 2: без истории диалога, подтверждений и учёта usage (этапы 3 и 5).
+ * Истории и подтверждений пока нет (этап 5). Расход каждого ответа модели сохраняется до исполнения инструментов.
  */
 class MessageHandler(
     private val core: CoreClient,
@@ -40,6 +43,7 @@ class MessageHandler(
     private val texts: Texts,
     private val clock: Clock,
     private val maxToolRounds: Int = DEFAULT_MAX_TOOL_ROUNDS,
+    private val usage: UsageRecorder = NoUsageRecorder,
 ) {
     private val log = LoggerFactory.getLogger(MessageHandler::class.java)
     private val toolsLock = Mutex()
@@ -50,6 +54,7 @@ class MessageHandler(
     suspend fun handle(
         chatId: Long,
         text: String,
+        eventId: String = UUID.randomUUID().toString(),
     ): String? {
         val user = core.findUserByChat(chatId)
         if (user == null || !user.isActive) {
@@ -57,7 +62,7 @@ class MessageHandler(
             return null
         }
         return try {
-            dialogue.commandReply(text, user) ?: converse(user, text)
+            dialogue.commandReply(text, user) ?: converse(user, text, eventId)
         } catch (e: CancellationException) {
             throw e
         } catch (
@@ -71,8 +76,10 @@ class MessageHandler(
     private suspend fun converse(
         user: CoreUser,
         text: String,
+        eventId: String,
     ): String {
         val now = clock.instant()
+        usage.before(user.id)
         val zone = ZoneId.of(requireNotNull(user.timezone))
         val messages =
             mutableListOf(
@@ -80,7 +87,7 @@ class MessageHandler(
                 ChatMessage(Role.USER, text),
             )
         repeat(maxToolRounds + 1) {
-            round(user, messages, zone, now)?.let { return it }
+            round(user, messages, zone, now, "$eventId:usage:$it")?.let { return it }
         }
         log.warn("Превышено число раундов инструментов, user_id={}", user.id)
         return texts.get("reply.failure")
@@ -92,8 +99,11 @@ class MessageHandler(
         messages: MutableList<ChatMessage>,
         zone: ZoneId,
         now: Instant,
+        usageKey: String,
     ): String? {
+        val invocationKey = "$usageKey:${UUID.randomUUID()}"
         val response = llm.complete(LlmRequest(messages, tools()))
+        usage.record(user.id, invocationKey, response)
         log.debug("LLM ответила моделью {}, usage={}", response.model, response.usage)
         val calls = response.message.toolCalls
         if (calls.isEmpty()) {

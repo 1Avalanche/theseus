@@ -2,15 +2,15 @@
 
 Сервис данных и домена: напоминания, пользователи, доступ, учёт usage, планировщик, уведомления (`Notifier` → Telegram). Наружу — MCP (инструменты для LLM) и internal REST (системные вызовы агента, не-ИИ клиенты). Архитектура — `docs/architecture.md`, решения — `docs/DECISIONS.md` (разделы 2–5, 7).
 
-**Статус:** этап 2 («ходячий скелет»). Gradle-модуль `:core`, плагины `theseus.application` + `theseus.serialization`, точка входа `theseus.core.MainKt`. Реализована часть контрактов этапа 1; упрощения этапа 2 и причины — `docs/DECISIONS.md`, §13.
+**Статус:** этап 3 реализован. Gradle-модуль `:core`, плагины `theseus.application` + `theseus.serialization`, точка входа `theseus.core.MainKt`. Проверки и их границы — `docs/roadmap.md`.
 
 ## Пакеты `theseus.core`
 
 | Пакет | Содержимое |
 |---|---|
 | `domain` | `reminder` (`Reminder`, `NewReminder`, `When`, `WhenResolver`), `user` (`User`, `AdminProfile`, статусы, `Gender`), `DomainException` + `ErrorCode`, `LocalFormats`. Без инфраструктуры |
-| `application` | `ReminderService`, `UserService`, `ReminderScheduler`; порты в `Ports.kt`: `UserRepository`, `ReminderRepository`, `Notifier`, `HealthProbe`; время — инжектируемый `Clock` |
-| `adapters.db` | Exposed + HikariCP + Flyway: `CoreDatabase` (подключение, миграции, `HealthProbe`), `ExposedUserRepository`, `ExposedReminderRepository` |
+| `application` | `ReminderService`, `UserService`, `AccountsService`, `Operations`, `ReminderScheduler`; порты репозиториев, `Notifier`, `HealthProbe`; время — инжектируемый `Clock` |
+| `adapters.db` | Exposed + HikariCP + Flyway: `CoreDatabase`, `ExposedUserRepository`, `ExposedInviteRepository`, `ExposedUsageRepository`, `ExposedReminderRepository`, `DatabaseOperations` |
 | `adapters.mcp` | `McpServerFactory`, `ReminderTools`, DTO инструментов |
 | `adapters.http` | `HttpModule`: Bearer-авторизация, `/mcp`, `/health`, REST |
 | `adapters.monitoring` | снимок состояния планировщика, БД, очереди доставок и ошибок Telegram |
@@ -20,13 +20,13 @@
 
 Старт (`Main.kt`): конфиг → миграции Flyway → админ из конфига (`ensureAdmin`) → планировщик → HTTP-сервер (Netty).
 
-## Что реализовано на этапе 2
+## Реализовано
 
 - MCP: только `create_reminder`, **только разовые** (`when`); `recurrence` → `invalid_recurrence`. Проверки дублей нет, `force` принимается и игнорируется. Остальные 8 инструментов — этапы 4–5.
-- REST: `GET /health`, `GET /internal/v1/users/by-chat/{chat_id}`. Остальное — этап 3 и далее.
+- REST: `GET /health`, пользователи, инвайты, usage и отключённые квоты; изменяющие запросы используют реестр `operation_results`. Системные вызовы уведомлений — этап 5.
 - Планировщик: тик раз в `THESEUS_SCHEDULER_INTERVAL_SECONDS` (30 с), только разовые напоминания. Доставка «как минимум один раз»; просроченные за время простоя досылаются с пометкой об опоздании; постоянные ошибки Telegram (400/403) закрывают напоминание как `FAILED`; пользователям не в `ACTIVE` уведомления не отправляются (напоминание закрывается без доставки).
 - Уведомление — текст без кнопок snooze (обработка нажатий — этап 5).
-- Админ создаётся сразу `ACTIVE` (онбординга нет); инвайтов, `llm_usage`, квот нет.
+- Новый админ создаётся в `ONBOARDING`; существующий профиль сохраняется. Инвайт одноразовый, хранится хэш кода, срок задаёт конфиг. После заполнения имени и таймзоны профиль становится активным. Квоты выключены.
 - Время: `WhenResolver` считает момент в таймзоне пользователя, лимит — 5 лет вперёд, точность — минута.
 
 Планировщик отмечает успешное завершение каждого прохода, включая пустой. Снимок `/tmp/theseus-core.monitor.json` обновляется каждые 30 секунд; количество и время самого старого наступившего активного напоминания вычисляются агрегатно, без текстов и без ограничения размером пакета планировщика. Эксплуатация — [monitoring.md](../monitoring.md).
@@ -42,7 +42,7 @@
 
 ## Данные
 
-Схема `core`: `users`, `invites`, `reminders`, `reminder_deliveries`, `llm_usage` — `docs/database.md`. Core мигрирует только эту схему. Миграция `V1` (этап 2) создаёт `users`, `reminders`, `reminder_deliveries`.
+Схема `core`: `users`, `invites`, `reminders`, `reminder_deliveries`, `llm_usage`, `operation_results` — `docs/database.md`. Core мигрирует только эту схему. `V1` создаёт пользователей и напоминания; `V2` — инвайты, usage и результаты операций.
 
 ## Уведомления
 

@@ -75,7 +75,7 @@ class PreviewTests(unittest.TestCase):
                     'GITHUB_STEP_SUMMARY': str(self.directory / 'summary')}
         self.request = {'action': 'authorize', 'build_run_id': 30, 'artifact_id': 40,
                         'artifact_digest': 'sha256:' + '1' * 64, 'release': 'a' * 40}
-        self.release = {'commit': 'a' * 40, 'config_version': '1',
+        self.release = {'commit': 'a' * 40, 'config_version': '2',
                         'core_digest': 'sha256:' + '2' * 64, 'agent_digest': 'sha256:' + '3' * 64}
 
     def test_owner_gets_checked_request_and_human_readable_summary(self):
@@ -83,6 +83,7 @@ class PreviewTests(unittest.TestCase):
                 return_value=(self.release, self.request)) as load:
             preview.preview()
         self.assertEqual(load.call_args.args[1], {'repository_id': 10, 'owner_id': 20})
+        self.assertEqual(load.call_args.args[0]['config_version'], '2')
         encoded = (self.directory / 'output').read_text().removeprefix('request=').strip()
         self.assertEqual(h.parse_authorization(encoded.encode(), 'test'), self.request)
         summary = (self.directory / 'summary').read_text()

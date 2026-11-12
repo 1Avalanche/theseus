@@ -24,7 +24,7 @@ def preview():
     stand = os.environ['STAND']
     h.require(stand in ('test', 'prod'), 'Неизвестный стенд')
     config = {'repository': repository, 'registry': 'ghcr.io/' + repository.split('/')[0].lower(),
-              'config_version': '1'}
+              'config_version': '2'}
     identity = {'repository_id': int(os.environ['GITHUB_REPOSITORY_ID']), 'owner_id': int(owner_id)}
     release, request = h.load_candidate(config, identity, int(raw_id), os.environ['GH_TOKEN'])
     encoded = json.dumps(request, separators=(',', ':'))

@@ -16,6 +16,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import theseus.agent.monitoring.DependencySignal
 import java.time.Clock
 import java.time.Duration
@@ -31,9 +32,11 @@ class OpenRouterClient(
     private val models: List<String>,
     private val timeout: Duration,
     private val signal: DependencySignal = DependencySignal(Clock.systemUTC()),
+    private val clock: Clock = Clock.systemUTC(),
 ) : LlmClient {
     override suspend fun complete(request: LlmRequest): LlmResponse {
         var failureCode = "network_or_response"
+        val started = clock.instant()
         try {
             val body = json.encodeToString(toWire(request))
             val response =
@@ -47,7 +50,16 @@ class OpenRouterClient(
             if (!response.status.isSuccess()) failureCode = response.status.value.toString()
             val text = response.bodyAsText()
             checkStatus(response.status)
-            return parse(text).also { signal.success() }
+            return parse(
+                text,
+            ).copy(
+                latencyMs =
+                    Duration
+                        .between(started, clock.instant())
+                        .toMillis()
+                        .coerceIn(0, Int.MAX_VALUE.toLong())
+                        .toInt(),
+            ).also { signal.success() }
         } catch (e: CancellationException) {
             throw e
         } catch (
@@ -97,7 +109,16 @@ class OpenRouterClient(
                     toolCalls = message.toolCalls.orEmpty().map { ToolCall(it.id, it.function.name, it.function.arguments) },
                 ),
             model = wire.model ?: models.first(),
-            usage = wire.usage?.let { LlmUsage(it.promptTokens, it.completionTokens) },
+            usage =
+                wire.usage?.let {
+                    LlmUsage(
+                        it.promptTokens,
+                        it.completionTokens,
+                        it.promptTokensDetails?.cachedTokens ?: 0,
+                        it.cost?.content,
+                    )
+                },
+            generationId = wire.id,
         )
     }
 
@@ -168,6 +189,7 @@ internal data class WireCall(
 
 @Serializable
 internal data class WireResponse(
+    val id: String? = null,
     val model: String? = null,
     val choices: List<WireChoice> = emptyList(),
     val usage: WireUsage? = null,
@@ -182,4 +204,11 @@ internal data class WireChoice(
 internal data class WireUsage(
     @SerialName("prompt_tokens") val promptTokens: Int = 0,
     @SerialName("completion_tokens") val completionTokens: Int = 0,
+    val cost: JsonPrimitive? = null,
+    @SerialName("prompt_tokens_details") val promptTokensDetails: WirePromptDetails? = null,
+)
+
+@Serializable
+internal data class WirePromptDetails(
+    @SerialName("cached_tokens") val cachedTokens: Int = 0,
 )

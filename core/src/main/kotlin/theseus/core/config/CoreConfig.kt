@@ -28,11 +28,13 @@ data class CoreConfig(
     val defaultTime: LocalTime,
     val schedulerInterval: Duration,
     val lateThreshold: Duration,
+    val inviteTtl: Duration = Duration.ofHours(DEFAULT_INVITE_TTL_HOURS),
 ) {
     override fun toString(): String = "CoreConfig(httpPort=$httpPort, db=${database.url}, admin=${admin.chatId})"
 
     companion object {
         const val MIN_TOKEN_LENGTH = 32
+        const val DEFAULT_INVITE_TTL_HOURS = 72L
 
         fun fromEnv(env: Map<String, String>): CoreConfig {
             val reader = EnvReader(env)
@@ -51,7 +53,7 @@ data class CoreConfig(
                     admin =
                         AdminProfile(
                             chatId = reader.long("THESEUS_ADMIN_CHAT_ID"),
-                            name = reader.required("THESEUS_ADMIN_NAME"),
+                            name = env["THESEUS_ADMIN_NAME"]?.trim().orEmpty(),
                             gender = reader.gender("THESEUS_ADMIN_GENDER"),
                             timezone = reader.zone("THESEUS_ADMIN_TIMEZONE"),
                         ),
@@ -59,6 +61,7 @@ data class CoreConfig(
                     schedulerInterval =
                         Duration.ofSeconds(reader.int("THESEUS_SCHEDULER_INTERVAL_SECONDS", 30, 5..300).toLong()),
                     lateThreshold = Duration.ofMinutes(reader.int("THESEUS_LATE_THRESHOLD_MINUTES", 5, 1..1440).toLong()),
+                    inviteTtl = Duration.ofHours(reader.int("THESEUS_INVITE_TTL_HOURS", 72, 1..720).toLong()),
                 )
             reader.throwIfErrors()
             return config
@@ -113,7 +116,7 @@ private class EnvReader(
     }
 
     fun zone(name: String): ZoneId {
-        val raw = required(name)
+        val raw = env[name]?.trim().orEmpty()
         if (raw.isEmpty()) return ZoneId.of("UTC")
         return try {
             ZoneId.of(raw)

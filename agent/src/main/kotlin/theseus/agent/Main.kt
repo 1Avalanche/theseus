@@ -17,6 +17,12 @@ import theseus.agent.monitoring.AgentMonitor
 import theseus.agent.pipeline.MessageHandler
 import theseus.agent.pipeline.ReplyRenderer
 import theseus.agent.prompt.PromptBuilder
+import theseus.agent.storage.JdbcAgentStore
+import theseus.agent.system.AdminCommands
+import theseus.agent.system.Onboarding
+import theseus.agent.system.OutgoingOperations
+import theseus.agent.system.PersistentUsageRecorder
+import theseus.agent.system.SystemHandler
 import theseus.agent.telegram.MonitoredTelegramBot
 import theseus.agent.telegram.TelegramBotRunner
 import theseus.agent.telegram.TelegramLogging
@@ -41,10 +47,21 @@ fun main() {
             install(SSE)
         }
     val core = HttpCoreClient(http, config.coreUrl, config.serviceToken)
+    val store = JdbcAgentStore.connect(config.databaseUrl, config.databaseUser, config.databasePassword, config.journalKey, clock)
+    store.migrate()
+    val operations = OutgoingOperations(store, core)
     val llm =
         OpenRouterClient(http, config.openRouterUrl, config.openRouterApiKey, config.mainModels, config.llmTimeout, monitor.openRouter)
     val handler =
-        MessageHandler(core, llm, PromptBuilder.fromResources(texts), ReplyRenderer(texts), texts, clock)
+        MessageHandler(
+            core,
+            llm,
+            PromptBuilder.fromResources(texts),
+            ReplyRenderer(texts),
+            texts,
+            clock,
+            usage = PersistentUsageRecorder(core, operations),
+        )
     TelegramLogging.install()
     val rawBot = createTelegramBot(config.telegramBotToken)
     val bot = MonitoredTelegramBot(rawBot, monitor)
@@ -55,7 +72,18 @@ fun main() {
         log.info("Telegram-бот: @{}", me.username?.withoutAt ?: me.id.chatId.long)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         log.info("agent запущен, модели: {}", config.mainModels)
-        val pollingJob = TelegramBotRunner(bot, handler).run(scope)
+        val system =
+            SystemHandler(
+                core,
+                store,
+                operations,
+                Onboarding(store, operations, texts, clock, config.timezoneButtons),
+                AdminCommands(core, operations, texts),
+                config.adminChatId,
+                requireNotNull(me.username).withoutAt,
+                texts,
+            )
+        val pollingJob = TelegramBotRunner(bot, handler, system, store, operations, config.adminChatId).run(scope)
         monitor.start(scope, pollingJob)
         pollingJob.join()
     }

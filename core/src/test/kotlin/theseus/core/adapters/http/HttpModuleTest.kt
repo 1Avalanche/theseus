@@ -3,11 +3,15 @@ package theseus.core.adapters.http
 import io.ktor.client.plugins.sse.SSE
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import io.mockk.mockk
 import io.modelcontextprotocol.kotlin.sdk.client.mcpStreamableHttp
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -16,9 +20,14 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import theseus.core.adapters.mcp.McpServerFactory
 import theseus.core.adapters.mcp.ReminderTools
+import theseus.core.application.AccountsRepository
+import theseus.core.application.AccountsService
 import theseus.core.application.InMemoryReminderRepository
 import theseus.core.application.InMemoryUserRepository
 import theseus.core.application.MutableClock
+import theseus.core.application.OperationReply
+import theseus.core.application.OperationRequest
+import theseus.core.application.Operations
 import theseus.core.application.ReminderService
 import theseus.core.application.UserService
 import theseus.core.application.user
@@ -26,11 +35,13 @@ import theseus.core.domain.reminder.WhenResolver
 import theseus.core.texts.Texts
 import java.time.Instant
 import java.time.LocalTime
+import java.util.UUID
 
 class HttpModuleTest {
     private val token = "t".repeat(40)
     private val reminders = InMemoryReminderRepository()
     private var healthy = true
+    private var mutationCalls = 0
 
     private fun ApplicationTestBuilder.setUp() {
         val users = UserService(InMemoryUserRepository(user(id = 7, chatId = 4242)))
@@ -43,10 +54,45 @@ class HttpModuleTest {
                     health = { healthy },
                     users = users,
                     mcpServer = McpServerFactory.create(ReminderTools(service, Texts.load("texts/core.properties"))),
+                    accounts =
+                        AccountsRoutes(
+                            AccountsService(
+                                mockk<AccountsRepository>(relaxed = true),
+                                MutableClock(Instant.EPOCH),
+                            ),
+                            object : Operations {
+                                override suspend fun execute(
+                                    request: OperationRequest,
+                                    now: Instant,
+                                    authorize: suspend () -> Unit,
+                                    action: suspend () -> OperationReply,
+                                ): OperationReply {
+                                    mutationCalls++
+                                    error("Неавторизованный запрос не должен выполнять операцию")
+                                }
+                            },
+                            MutableClock(Instant.EPOCH),
+                        ),
                 ),
             )
         }
     }
+
+    @Test
+    fun `unauthorized mutation is rejected before operation journal and domain code`() =
+        testApplication {
+            setUp()
+            for (tokenValue in listOf("", "wrong")) {
+                val response =
+                    client.post("/internal/v1/invites") {
+                        bearerAuth(tokenValue)
+                        header("Idempotency-Key", UUID.randomUUID().toString())
+                        setBody("""{"gender":"female"}""")
+                    }
+                assertEquals(HttpStatusCode.Unauthorized, response.status)
+            }
+            assertEquals(0, mutationCalls)
+        }
 
     @Test
     fun `health is open and reflects database state`() =

@@ -19,10 +19,11 @@ services:
       THESEUS_SERVICE_TOKEN: ${THESEUS_SERVICE_TOKEN:?}
       THESEUS_TELEGRAM_BOT_TOKEN: ${THESEUS_TELEGRAM_BOT_TOKEN:?}
       THESEUS_ADMIN_CHAT_ID: ${THESEUS_ADMIN_CHAT_ID:?}
-      THESEUS_ADMIN_NAME: ${THESEUS_ADMIN_NAME:?}
+      THESEUS_ADMIN_NAME: ${THESEUS_ADMIN_NAME:-}
       THESEUS_ADMIN_GENDER: ${THESEUS_ADMIN_GENDER:-unspecified}
-      THESEUS_ADMIN_TIMEZONE: ${THESEUS_ADMIN_TIMEZONE:?}
+      THESEUS_ADMIN_TIMEZONE: ${THESEUS_ADMIN_TIMEZONE:-UTC}
       THESEUS_DEFAULT_TIME: ${THESEUS_DEFAULT_TIME:-09:00}
+      THESEUS_INVITE_TTL_HOURS: ${THESEUS_INVITE_TTL_HOURS:-72}
       THESEUS_LOG_LEVEL: ${THESEUS_LOG_LEVEL:-INFO}
     mem_limit: ${THESEUS_CORE_MEM_LIMIT:-400m}
     networks:
@@ -55,10 +56,17 @@ services:
       THESEUS_OPENROUTER_API_KEY: ${THESEUS_OPENROUTER_API_KEY:?}
       THESEUS_LLM_MAIN_MODELS: ${THESEUS_LLM_MAIN_MODELS:?}
       THESEUS_HEALTH_FILE: /tmp/theseus-agent.health
+      THESEUS_ADMIN_CHAT_ID: ${THESEUS_ADMIN_CHAT_ID}
+      THESEUS_DB_URL: jdbc:postgresql://theseus-postgres:5432/theseus_${THESEUS_STAND}
+      THESEUS_DB_USER: theseus_${THESEUS_STAND}_agent
+      THESEUS_DB_PASSWORD: ${THESEUS_AGENT_DB_PASSWORD:?}
+      THESEUS_JOURNAL_KEY: ${THESEUS_JOURNAL_KEY:?}
+      THESEUS_TIMEZONE_BUTTONS: ${THESEUS_TIMEZONE_BUTTONS:-Москва=Europe/Moscow,Екатеринбург=Asia/Yekaterinburg}
       THESEUS_LOG_LEVEL: ${THESEUS_LOG_LEVEL:-INFO}
     mem_limit: ${THESEUS_AGENT_MEM_LIMIT:-400m}
     networks:
       - stand
+      - db
     healthcheck:
       # Файл хранит время последнего успешного getUpdates, включая пустой ответ; порог 10 минут.
       test: ["CMD-SHELL", "test -f /tmp/theseus-agent.health && test $$(( $$(date +%s) - $$(stat -c %Y /tmp/theseus-agent.health) )) -lt 600"]

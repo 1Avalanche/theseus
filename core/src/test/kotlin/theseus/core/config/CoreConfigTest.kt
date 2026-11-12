@@ -60,4 +60,12 @@ class CoreConfigTest {
 
         assertFalse("db-secret" in text || "123:abc" in text || "s".repeat(40) in text)
     }
+
+    @Test
+    fun `new admin does not require legacy profile fields`() {
+        val config = CoreConfig.fromEnv(valid - "THESEUS_ADMIN_NAME" - "THESEUS_ADMIN_TIMEZONE")
+        assertEquals("", config.admin.name)
+        assertEquals(ZoneId.of("UTC"), config.admin.timezone)
+        assertEquals(Duration.ofHours(72), config.inviteTtl)
+    }
 }

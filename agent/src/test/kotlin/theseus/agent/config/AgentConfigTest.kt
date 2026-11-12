@@ -14,6 +14,11 @@ class AgentConfigTest {
             "THESEUS_SERVICE_TOKEN" to "s".repeat(40),
             "THESEUS_OPENROUTER_API_KEY" to "or-secret",
             "THESEUS_LLM_MAIN_MODELS" to "anthropic/claude-haiku-5.5, google/gemini-3.1-flash-lite ,openai/gpt-5.4-nano",
+            "THESEUS_ADMIN_CHAT_ID" to "4242",
+            "THESEUS_DB_URL" to "jdbc:postgresql://localhost/agent",
+            "THESEUS_DB_USER" to "agent",
+            "THESEUS_DB_PASSWORD" to "db-secret",
+            "THESEUS_JOURNAL_KEY" to "a".repeat(64),
         )
 
     @Test
