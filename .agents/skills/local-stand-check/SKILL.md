@@ -38,6 +38,8 @@ docker compose -p theseus-test -f deploy/vps/docker-compose.yml --env-file <tmp>
 - agent с фиктивным токеном падает на старте с `UnauthorizedException` и перезапускается — это ожидаемо.
 - Отсутствие уникального контрольного текста напоминания проверь командой `python3 .agents/skills/local-stand-check/scripts/check_logs.py '<текст напоминания>' theseus-test-core theseus-test-agent` — код завершения 0. Скрипт читает stdout/stderr каждого контейнера отдельно; ошибка Docker или таймаут дают ненулевой код, сами логи не выводятся. Ноль совпадений после ошибки чтения не считается успешной проверкой.
 - `docker stats --no-stream` — RSS в пределах `mem_limit` с запасом.
+- Мониторинг: `docker exec theseus-test-core cat /tmp/theseus-core.monitor.json` — свежий `observed_at`, `database_ok=true`, `last_success_at` обновляется даже при пустой очереди. После ожидаемого Telegram 401 — код и счётчик без текста напоминания; ожидающее напоминание остаётся в агрегате просроченных. agent с фиктивным токеном не даёт успешного polling — это ожидаемый отказ, не подтверждение его пульса. Успех пустого `getUpdates` проверяется юнит-тестом `MonitoredTelegramBotTest`.
+- `python3 -m unittest discover -s deploy/monitor/tests -v` — границы 600 секунд, просрочки, диск, остановленный test, ограниченные рестарты и отсутствие рестартов при отказе зависимостей, подавление тревог и восстановление. Для проверки systemd unit и Python в Ubuntu: `docker build -f deploy/monitor/tests/Dockerfile -t local/theseus-monitor-check .`, затем `docker run --rm --network none local/theseus-monitor-check`. Проверки не отправляют реальные оповещения; работа внешнего heartbeat и канал владельца проверяются отдельно после установки на VPS.
 
 ## 5. Уборка
 

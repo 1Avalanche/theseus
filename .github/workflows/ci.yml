@@ -27,11 +27,16 @@ jobs:
       - name: Сборка и тесты
         run: |
           python3 -m unittest discover -s deploy/handler/tests -v
+          python3 -m unittest discover -s deploy/monitor/tests -v
           ./gradlew build
       - name: Ограничения SSH и sudo в Ubuntu
         run: |
           docker build -f deploy/handler/tests/Dockerfile -t theseus-deploy-check .
           docker run --rm --network none theseus-deploy-check
+      - name: Монитор и systemd в Ubuntu
+        run: |
+          docker build -f deploy/monitor/tests/Dockerfile -t theseus-monitor-check .
+          docker run --rm --network none theseus-monitor-check
       - name: Отчёты тестов
         if: failure()
         uses: actions/upload-artifact@v4

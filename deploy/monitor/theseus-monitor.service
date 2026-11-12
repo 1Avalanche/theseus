@@ -1,0 +1,18 @@
+[Unit]
+Description=Минимальный монитор Theseus
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=/opt/theseus/monitor.env
+ExecStart=/usr/bin/python3 -I /opt/theseus/monitor/monitor.py
+TimeoutStartSec=180
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/theseus
+

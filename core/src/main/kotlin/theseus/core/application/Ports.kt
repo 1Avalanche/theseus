@@ -23,6 +23,9 @@ interface UserRepository {
 }
 
 interface ReminderRepository {
+    /** Агрегаты ожидающих доставок без чтения пользовательских текстов и ограничения размером пачки. */
+    suspend fun deliveryBacklog(now: Instant): DeliveryBacklog
+
     suspend fun create(
         reminder: NewReminder,
         now: Instant,
@@ -44,6 +47,12 @@ interface ReminderRepository {
         now: Instant,
     )
 }
+
+/** Наступившие активные срабатывания; завершённые и будущие сюда не входят. */
+data class DeliveryBacklog(
+    val count: Long,
+    val oldestDueAt: Instant?,
+)
 
 /** Проверка доступности хранилища для healthcheck. */
 fun interface HealthProbe {

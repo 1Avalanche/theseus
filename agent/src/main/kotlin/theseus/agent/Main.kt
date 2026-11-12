@@ -1,6 +1,7 @@
 package theseus.agent
 
 import dev.inmo.tgbotapi.bot.ktor.telegramBot
+import dev.inmo.tgbotapi.bot.settings.limiters.RequestLimiter
 import dev.inmo.tgbotapi.extensions.api.bot.getMe
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
@@ -14,23 +15,23 @@ import org.slf4j.LoggerFactory
 import theseus.agent.config.AgentConfig
 import theseus.agent.core.HttpCoreClient
 import theseus.agent.llm.OpenRouterClient
+import theseus.agent.monitoring.AgentMonitor
 import theseus.agent.pipeline.MessageHandler
 import theseus.agent.pipeline.ReplyRenderer
 import theseus.agent.prompt.PromptBuilder
-import theseus.agent.telegram.HealthHeartbeat
+import theseus.agent.telegram.MonitoredTelegramBot
 import theseus.agent.telegram.TelegramBotRunner
 import theseus.agent.telegram.TelegramLogging
 import theseus.agent.texts.Texts
 import java.time.Clock
 import java.time.Duration
 
-/** Интервал пульса; healthcheck в compose считает контейнер больным, если файл старше 120 с. */
-private val HEARTBEAT_INTERVAL: Duration = Duration.ofSeconds(30)
-
 /** Точка входа agent: конфиг → клиенты core и OpenRouter → пайплайн → long polling Telegram. */
 fun main() {
     val log = LoggerFactory.getLogger("theseus.agent")
     val config = AgentConfig.fromEnv(System.getenv())
+    val clock = Clock.systemUTC()
+    val monitor = AgentMonitor(clock, config.healthFile)
     val texts = Texts.load("texts/agent.properties")
     val http =
         HttpClient(CIO) {
@@ -41,19 +42,29 @@ fun main() {
             install(SSE)
         }
     val core = HttpCoreClient(http, config.coreUrl, config.serviceToken)
-    val llm = OpenRouterClient(http, config.openRouterUrl, config.openRouterApiKey, config.mainModels, config.llmTimeout)
+    val llm =
+        OpenRouterClient(http, config.openRouterUrl, config.openRouterApiKey, config.mainModels, config.llmTimeout, monitor.openRouter)
     val handler =
-        MessageHandler(core, llm, PromptBuilder.fromResources(texts), ReplyRenderer(texts), texts, Clock.systemUTC())
+        MessageHandler(core, llm, PromptBuilder.fromResources(texts), ReplyRenderer(texts), texts, clock)
     TelegramLogging.install()
-    val bot = telegramBot(config.telegramBotToken)
+    val rawBot =
+        telegramBot(config.telegramBotToken) {
+            // Повторы наблюдает наш адаптер; скрытые повторы библиотеки маскируют ошибки и зависания.
+            requestsLimiter =
+                object : RequestLimiter {
+                    override suspend fun <T> limit(block: suspend () -> T): T = block()
+                }
+        }
+    val bot = MonitoredTelegramBot(rawBot, monitor)
 
     runBlocking {
         // Неверный токен — ошибка конфига: падаем сразу, а не крутим long polling в цикле ошибок 401.
         val me = bot.getMe()
         log.info("Telegram-бот: @{}", me.username?.withoutAt ?: me.id.chatId.long)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        HealthHeartbeat(bot, config.healthFile, HEARTBEAT_INTERVAL).start(scope)
         log.info("agent запущен, модели: {}", config.mainModels)
-        TelegramBotRunner(bot, handler).run(scope).join()
+        val pollingJob = TelegramBotRunner(bot, handler).run(scope)
+        monitor.start(scope, pollingJob)
+        pollingJob.join()
     }
 }

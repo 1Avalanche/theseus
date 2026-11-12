@@ -13,6 +13,7 @@
 | `adapters.db` | Exposed + HikariCP + Flyway: `CoreDatabase` (подключение, миграции, `HealthProbe`), `ExposedUserRepository`, `ExposedReminderRepository` |
 | `adapters.mcp` | `McpServerFactory`, `ReminderTools`, DTO инструментов |
 | `adapters.http` | `HttpModule`: Bearer-авторизация, `/mcp`, `/health`, REST |
+| `adapters.monitoring` | снимок состояния планировщика, БД, очереди доставок и ошибок Telegram |
 | `adapters.telegram` | `TelegramNotifier` (реализация `Notifier`) |
 | `config` | `CoreConfig` из env, валидация при старте; переменные — `docs/operations.md` |
 | `texts` | загрузка `texts/core.properties` |
@@ -27,6 +28,8 @@
 - Уведомление — текст без кнопок snooze (обработка нажатий — этап 5).
 - Админ создаётся сразу `ACTIVE` (онбординга нет); инвайтов, `llm_usage`, квот нет.
 - Время: `WhenResolver` считает момент в таймзоне пользователя, лимит — 5 лет вперёд, точность — минута.
+
+Планировщик отмечает успешное завершение каждого прохода, включая пустой. Снимок `/tmp/theseus-core.monitor.json` обновляется каждые 30 секунд; количество и время самого старого наступившего активного напоминания вычисляются агрегатно, без текстов и без ограничения размером пакета планировщика. Эксплуатация — [monitoring.md](../monitoring.md).
 
 ## Публичные интерфейсы (контракт целиком; реализованное — выше)
 

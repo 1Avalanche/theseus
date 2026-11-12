@@ -65,6 +65,11 @@ class InMemoryReminderRepository : ReminderRepository {
     val reminders = mutableMapOf<Long, Reminder>()
     val deliveries = mutableListOf<Pair<Long, DeliveryRecord>>()
 
+    override suspend fun deliveryBacklog(now: Instant): DeliveryBacklog {
+        val due = findDue(now, Int.MAX_VALUE)
+        return DeliveryBacklog(due.size.toLong(), due.firstOrNull()?.nextFireAt)
+    }
+
     override suspend fun create(
         reminder: NewReminder,
         now: Instant,

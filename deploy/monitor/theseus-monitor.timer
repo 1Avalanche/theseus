@@ -1,0 +1,11 @@
+[Unit]
+Description=Проверка Theseus каждые 10 минут
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=10min
+AccuracySec=1s
+Unit=theseus-monitor.service
+
+[Install]
+WantedBy=timers.target

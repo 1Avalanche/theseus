@@ -17,9 +17,12 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import theseus.agent.monitoring.DependencySignal
+import java.time.Clock
 import java.time.Duration
 
 class OpenRouterClientTest {
+    private val signal = DependencySignal(Clock.systemUTC())
     private val models = listOf("anthropic/claude-haiku-5.5", "google/gemini-3.1-flash-lite")
 
     private fun client(
@@ -40,6 +43,7 @@ class OpenRouterClientTest {
             "or-key",
             models,
             Duration.ofSeconds(30),
+            signal,
         )
     }
 
@@ -144,6 +148,23 @@ class OpenRouterClientTest {
     fun `http error becomes llm exception`() =
         runTest {
             assertThrows<LlmException> { client(HttpStatusCode.BadGateway, "{}").complete(request) }
+            assertEquals("502", signal.snapshot()["last_code"]!!.jsonPrimitive.content)
+            assertEquals("1", signal.snapshot()["consecutive_errors"]!!.jsonPrimitive.content)
+        }
+
+    @Test
+    fun `successful response clears failure without erasing counters`() =
+        runTest {
+            assertThrows<LlmException> { client(HttpStatusCode.Unauthorized, "private body").complete(request) }
+            client(body = """{"choices":[{"message":{"role":"assistant","content":"ok"}}]}""").complete(request)
+            assertEquals("null", signal.snapshot()["failing_since"].toString())
+            assertEquals(
+                "1",
+                signal
+                    .snapshot()["errors"]!!
+                    .jsonObject["401"]!!
+                    .jsonPrimitive.content,
+            )
         }
 
     @Test
