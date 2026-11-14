@@ -11,6 +11,14 @@ import java.time.LocalTime
 import java.time.ZoneId
 
 class CoreConfigTest {
+    @Test
+    fun `stand defaults to prod and only explicit test enables test stand`() {
+        assertEquals("prod", CoreConfig.fromEnv(valid).stand)
+        assertEquals("prod", CoreConfig.fromEnv(valid + ("THESEUS_STAND" to "prod")).stand)
+        assertEquals("test", CoreConfig.fromEnv(valid + ("THESEUS_STAND" to "test")).stand)
+        assertThrows<ConfigException> { CoreConfig.fromEnv(valid + ("THESEUS_STAND" to "tes")) }
+    }
+
     private val valid =
         mapOf(
             "THESEUS_DB_URL" to "jdbc:postgresql://db:5432/theseus_test",

@@ -18,16 +18,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
 import theseus.agent.pipeline.MessageHandler
 import theseus.agent.system.AgentStore
 import theseus.agent.system.BotReply
+import theseus.agent.system.ChatLocks
 import theseus.agent.system.Incoming
 import theseus.agent.system.OutgoingOperations
 import theseus.agent.system.SystemHandler
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Long polling Telegram. Только личные чаты; сообщения одного chatId обрабатываются строго
@@ -40,9 +38,9 @@ class TelegramBotRunner(
     private val store: AgentStore,
     private val operations: OutgoingOperations,
     private val adminChatId: Long,
+    private val chatLocks: ChatLocks = ChatLocks(),
 ) {
     private val log = LoggerFactory.getLogger(TelegramBotRunner::class.java)
-    private val chatLocks = ConcurrentHashMap<Long, Mutex>()
 
     suspend fun run(scope: CoroutineScope): Job {
         recover()
@@ -130,7 +128,7 @@ class TelegramBotRunner(
         chatId: Long,
         action: suspend () -> Unit,
     ) {
-        chatLocks.computeIfAbsent(chatId) { Mutex() }.withLock {
+        chatLocks.withChat(chatId) {
             try {
                 action()
             } catch (e: CancellationException) {

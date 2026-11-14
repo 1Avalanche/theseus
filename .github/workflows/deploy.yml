@@ -1,5 +1,6 @@
 # Только запрос ограниченному обработчику; файлы и секреты приложения не копируются.
 name: Deploy
+run-name: ${{ inputs.action == 'stop' && 'stopping...' || github.workflow }}
 
 on:
   workflow_dispatch:
@@ -27,6 +28,7 @@ concurrency:
 
 jobs:
   deploy:
+    name: ${{ inputs.action == 'stop' && 'stop' || 'deploy' }}
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.repository == '1Avalanche/theseus' &&

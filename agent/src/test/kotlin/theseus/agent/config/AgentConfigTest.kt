@@ -7,6 +7,14 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 class AgentConfigTest {
+    @Test
+    fun `stand defaults to prod and rejects unknown values`() {
+        assertEquals("prod", AgentConfig.fromEnv(valid).stand)
+        assertEquals("test", AgentConfig.fromEnv(valid + ("THESEUS_STAND" to "test")).stand)
+        assertEquals("prod", AgentConfig.fromEnv(valid + ("THESEUS_STAND" to "prod")).stand)
+        assertThrows<ConfigException> { AgentConfig.fromEnv(valid + ("THESEUS_STAND" to "")) }
+    }
+
     private val valid =
         mapOf(
             "THESEUS_TELEGRAM_BOT_TOKEN" to "123:abc",

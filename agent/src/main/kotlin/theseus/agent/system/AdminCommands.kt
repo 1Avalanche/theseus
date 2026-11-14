@@ -113,7 +113,27 @@ class AdminCommands(
         val id = words.getOrNull(1)?.toLongOrNull()?.takeIf { it > 0 } ?: return BotReply(texts.get("admin.help"))
         val path = if (command == "/invite_revoke") "/invites/$id/revoke" else "/users/$id/${command.drop(1)}"
         val result = operations.perform("${input.id}:admin", "POST", path, JsonObject(emptyMap()))
-        return if (result.successful) BotReply(texts.get("admin.updated")) else errorReply(result, texts)
+        return when {
+            !result.successful -> errorReply(result, texts)
+            command == "/invite_revoke" -> BotReply(texts.get("admin.updated"))
+            else -> accessReply(command, result.body)
+        }
+    }
+
+    private fun accessReply(
+        command: String,
+        user: JsonObject,
+    ): BotReply {
+        val id = user.value("id")
+        val name = user.value("name").takeIf { it.isNotBlank() }
+        val identity =
+            if (name == null) {
+                texts.get("admin.user_unnamed", mapOf("id" to id))
+            } else {
+                texts.get("admin.user_named", mapOf("id" to id, "name" to name))
+            }
+        val key = if (command == "/revoke") "admin.user_revoked" else "admin.user_restored"
+        return BotReply(texts.get(key, mapOf("user" to identity)))
     }
 
     private fun renderList(
@@ -185,7 +205,7 @@ class AdminCommands(
     }
 
     companion object {
-        val commands = setOf("/invite", "/invites", "/invite_revoke", "/users", "/revoke", "/restore", "/stats")
+        val commands = setOf("/invite", "/invites", "/invite_revoke", "/users", "/revoke", "/restore", "/stats", "/hard_delete")
     }
 }
 

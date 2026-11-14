@@ -22,6 +22,7 @@ data class AgentConfig(
     val databaseUser: String = "",
     val databasePassword: String = "",
     val journalKey: String = "",
+    val stand: String = "prod",
     val timezoneButtons: List<Pair<String, String>> = listOf("Москва" to "Europe/Moscow", "Екатеринбург" to "Asia/Yekaterinburg"),
 ) {
     override fun toString(): String = "AgentConfig(coreUrl=$coreUrl, mainModels=$mainModels)"
@@ -33,6 +34,15 @@ data class AgentConfig(
 
         private const val MAX_ZONE_BUTTONS = 6
         private const val MAX_ZONE_LABEL_LENGTH = 32
+
+        private fun readStand(
+            env: Map<String, String>,
+            errors: MutableList<String>,
+        ): String {
+            val stand = env["THESEUS_STAND"] ?: "prod"
+            if (stand !in setOf("test", "prod")) errors += "THESEUS_STAND: ожидается test | prod"
+            return stand
+        }
 
         private fun invalidZoneButton(pair: Pair<String, String>): Boolean =
             pair.first.isBlank() || pair.first.length > MAX_ZONE_LABEL_LENGTH || pair.second !in java.time.ZoneId.getAvailableZoneIds()
@@ -107,6 +117,7 @@ data class AgentConfig(
                     databaseUser = required("THESEUS_DB_USER"),
                     databasePassword = required("THESEUS_DB_PASSWORD"),
                     journalKey = journalKey,
+                    stand = readStand(env, errors),
                     timezoneButtons = zones,
                 )
             if (errors.isNotEmpty()) throw ConfigException("Некорректный конфиг:\n" + errors.joinToString("\n") { " - $it" })

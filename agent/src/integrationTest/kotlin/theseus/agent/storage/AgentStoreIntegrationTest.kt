@@ -4,6 +4,7 @@ import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -19,6 +20,7 @@ import theseus.agent.core.CoreUser
 import theseus.agent.system.BotReply
 import theseus.agent.system.EventSnapshot
 import theseus.agent.system.Incoming
+import theseus.agent.system.Outgoing
 import theseus.agent.system.OutgoingOperations
 import theseus.agent.system.RestReply
 import theseus.agent.system.SystemCore
@@ -55,6 +57,78 @@ class AgentStoreIntegrationTest {
         )
 
     private fun store(pool: HikariDataSource) = JdbcAgentStore(pool, JournalCipher(key), clock).also { it.migrate() }
+
+    @Test fun `erase removes payloads and linked admin caches while hashes survive restart`() =
+        runTest {
+            val target = CoreUser(701, 7701, "active", "ERASE-PRIVATE", "female", "UTC")
+            val snapshot = EventSnapshot(Incoming("erase-start", 7701, "/start ERASE-CODE"), null, null)
+            val activation =
+                Outgoing(
+                    UUID.randomUUID(),
+                    "erase-start:activate",
+                    "POST",
+                    "/users/activate",
+                    Json.parseToJsonElement("""{"chat_id":7701,"invite_code":"ERASE-CODE"}""").jsonObject,
+                    null,
+                )
+            val saved = pool()
+            store(saved).use { journal ->
+                journal.beginEvent(snapshot)
+                journal.beginEvent(EventSnapshot(Incoming("erase-profile", 7701, "ERASE-PRIVATE"), target, null))
+                journal.beginEvent(
+                    EventSnapshot(Incoming("erase-owner-list", 1, "/users@test_bot\nignored"), target.copy(id = 1, chatId = 1), null),
+                )
+                journal.finishEvent("erase-owner-list", BotReply("ERASE-PRIVATE"))
+                journal.beginEvent(EventSnapshot(Incoming("keep-other", 8801, "KEEP-PRIVATE"), target.copy(id = 801, chatId = 8801), null))
+                journal.propose(701, ZoneProposal("proposal", "UTC"))
+                journal.beginOperation(activation)
+                journal.beginOperation(
+                    Outgoing(
+                        UUID.randomUUID(),
+                        "erase-usage",
+                        "POST",
+                        "/usage",
+                        Json.parseToJsonElement("""{"user_id":701}""").jsonObject,
+                        null,
+                    ),
+                )
+                journal.beginEvent(EventSnapshot(Incoming("erase-invite", 1, "/invite female ERASE-LABEL"), null, null))
+                val inviteOp = Outgoing(UUID.randomUUID(), "erase-invite:admin", "POST", "/invites", JsonObject(emptyMap()), null)
+                journal.beginOperation(inviteOp)
+                journal.finishOperation(
+                    inviteOp.id,
+                    RestReply(201, Json.parseToJsonElement("""{"id":123,"code":"ERASE-CODE"}""").jsonObject),
+                )
+                journal.eraseUser(701, 7701, listOf(123))
+                assertEquals(null, journal.proposal(701))
+                assertTrue(journal.findEvent("erase-start")!!.delivered)
+                assertTrue(journal.findEvent("erase-owner-list")!!.delivered)
+                assertTrue(journal.findEvent("erase-invite")!!.delivered)
+                assertEquals(
+                    "KEEP-PRIVATE",
+                    journal
+                        .findEvent("keep-other")!!
+                        .snapshot.input.text,
+                )
+                assertTrue(journal.pendingOperations().none { it.eventKey.startsWith("erase-") })
+                saved.connection.use { connection ->
+                    connection.prepareStatement("select count(*) from incoming_events where chat_id=7701 or user_id=701").use {
+                        it.executeQuery().use { row ->
+                            row.next()
+                            assertEquals(0, row.getInt(1))
+                        }
+                    }
+                    connection.prepareStatement("select key_hash from erased_journal").use {
+                        it.executeQuery().use { row -> while (row.next()) assertTrue(row.getString(1).matches(Regex("[0-9a-f]{64}"))) }
+                    }
+                }
+            }
+            store(pool()).use { journal ->
+                assertTrue(journal.beginEvent(snapshot).delivered)
+                assertEquals(410, journal.beginOperation(activation).second!!.status)
+                assertTrue(journal.pendingEvents().none { it.snapshot.input.chatId == 7701L })
+            }
+        }
 
     @Test fun `restart reuses key and original secret request after core committed but response was lost`() =
         runTest {

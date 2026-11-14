@@ -23,6 +23,7 @@ import theseus.core.adapters.monitoring.DeliverySignal
 import theseus.core.adapters.telegram.TelegramLogging
 import theseus.core.adapters.telegram.TelegramNotifier
 import theseus.core.application.AccountsService
+import theseus.core.application.HardDeleteService
 import theseus.core.application.ReminderScheduler
 import theseus.core.application.ReminderService
 import theseus.core.application.UserService
@@ -68,7 +69,13 @@ fun main() {
             health = database,
             users = users,
             mcpServer = McpServerFactory.create(ReminderTools(reminders, texts)),
-            accounts = AccountsRoutes(AccountsService(userRepository, clock, config.inviteTtl), DatabaseOperations(database), clock),
+            accounts =
+                AccountsRoutes(
+                    AccountsService(userRepository, clock, config.inviteTtl),
+                    DatabaseOperations(database),
+                    clock,
+                    if (config.stand == "test") HardDeleteService(userRepository, clock, config.admin.chatId) else null,
+                ),
         )
     log.info("core слушает порт {}", config.httpPort)
     embeddedServer(Netty, port = config.httpPort) { coreModule(deps) }.start(wait = true)

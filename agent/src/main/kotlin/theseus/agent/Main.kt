@@ -19,6 +19,8 @@ import theseus.agent.pipeline.ReplyRenderer
 import theseus.agent.prompt.PromptBuilder
 import theseus.agent.storage.JdbcAgentStore
 import theseus.agent.system.AdminCommands
+import theseus.agent.system.ChatLocks
+import theseus.agent.system.HardDelete
 import theseus.agent.system.Onboarding
 import theseus.agent.system.OutgoingOperations
 import theseus.agent.system.PersistentUsageRecorder
@@ -72,6 +74,7 @@ fun main() {
         log.info("Telegram-бот: @{}", me.username?.withoutAt ?: me.id.chatId.long)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         log.info("agent запущен, модели: {}", config.mainModels)
+        val chatLocks = ChatLocks()
         val system =
             SystemHandler(
                 core,
@@ -82,8 +85,9 @@ fun main() {
                 config.adminChatId,
                 requireNotNull(me.username).withoutAt,
                 texts,
+                hardDelete = if (config.stand == "test") HardDelete(core, store, operations, chatLocks, texts) else null,
             )
-        val pollingJob = TelegramBotRunner(bot, handler, system, store, operations, config.adminChatId).run(scope)
+        val pollingJob = TelegramBotRunner(bot, handler, system, store, operations, config.adminChatId, chatLocks).run(scope)
         monitor.start(scope, pollingJob)
         pollingJob.join()
     }

@@ -1,0 +1,34 @@
+# Точечные разрешения только доверенного проекта Theseus.
+# Markdown в соседних *.md — инструкции; этот *.rules читает механизм разрешений Codex.
+prefix_rule(
+    pattern=["docker", "ps"],
+    decision="allow",
+    match=["docker ps", "docker ps --all"],
+    not_match=["docker exec theseus-test-core sh"],
+)
+prefix_rule(
+    pattern=["docker", "stats"],
+    decision="allow",
+    match=["docker stats --no-stream"],
+    not_match=["docker compose down"],
+)
+prefix_rule(
+    pattern=["docker", "version"],
+    decision="allow",
+    match=["docker version"],
+    not_match=["docker run alpine"],
+)
+
+# Запускать от корня репозитория. Обёртка фиксирует каталог и проверяет задачи Gradle.
+prefix_rule(
+    pattern=["python3", ".codex/scripts/gradle_check.py"],
+    decision="allow",
+    match=["python3 .codex/scripts/gradle_check.py build installDist"],
+    not_match=["python3 -c 'print(1)'", "./gradlew build"],
+)
+prefix_rule(
+    pattern=["python3", ".agents/skills/local-stand-check/scripts/check_logs.py"],
+    decision="allow",
+    match=["python3 .agents/skills/local-stand-check/scripts/check_logs.py TEXT theseus-test-core theseus-test-agent"],
+    not_match=["python3 /tmp/smoke.py"],
+)

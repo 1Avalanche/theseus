@@ -13,6 +13,7 @@ services:
     environment:
       JAVA_OPTS: -Xmx${THESEUS_CORE_HEAP:-256m} ${THESEUS_JAVA_OPTS_COMMON:--XX:+UseSerialGC -XX:MaxMetaspaceSize=128m -Xss512k -XX:+ExitOnOutOfMemoryError -Duser.timezone=UTC}
       THESEUS_HTTP_PORT: "8080"
+      THESEUS_STAND: ${THESEUS_STAND:?}
       THESEUS_DB_URL: jdbc:postgresql://theseus-postgres:5432/theseus_${THESEUS_STAND}
       THESEUS_DB_USER: theseus_${THESEUS_STAND}_core
       THESEUS_DB_PASSWORD: ${THESEUS_CORE_DB_PASSWORD:?}
@@ -51,6 +52,7 @@ services:
     environment:
       JAVA_OPTS: -Xmx${THESEUS_AGENT_HEAP:-256m} ${THESEUS_JAVA_OPTS_COMMON:--XX:+UseSerialGC -XX:MaxMetaspaceSize=128m -Xss512k -XX:+ExitOnOutOfMemoryError -Duser.timezone=UTC}
       THESEUS_CORE_URL: http://theseus-${THESEUS_STAND}-core:8080
+      THESEUS_STAND: ${THESEUS_STAND:?}
       THESEUS_SERVICE_TOKEN: ${THESEUS_SERVICE_TOKEN}
       THESEUS_TELEGRAM_BOT_TOKEN: ${THESEUS_TELEGRAM_BOT_TOKEN}
       THESEUS_OPENROUTER_API_KEY: ${THESEUS_OPENROUTER_API_KEY:?}

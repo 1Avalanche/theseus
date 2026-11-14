@@ -30,6 +30,7 @@ CODE_FILES = re.compile(
 )
 HOOK_FILES = re.compile(
     r"^\.codex/hooks/.*\.py$|^\.codex/hooks\.json$"
+    r"|^\.codex/scripts/.*\.py$|^\.codex/rules/.*\.rules$"
     r"|^\.agents/skills/local-stand-check/scripts/.*\.py$"
 )
 STATE_FILE = "codex-test-guard.json"

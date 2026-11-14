@@ -19,6 +19,7 @@ class SystemHandler(
     private val adminChatId: Long,
     private val botUsername: String,
     private val texts: Texts,
+    private val hardDelete: HardDelete? = null,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val dialogue = DialogReplies(texts)
@@ -46,14 +47,16 @@ class SystemHandler(
     }
 
     suspend fun resume(event: StoredEvent): BotReply {
-        val snapshot = event.snapshot
+        val persisted = store.findEvent(event.snapshot.input.id) ?: return BotReply("")
+        if (persisted.snapshot.input.chatId == 0L && persisted.delivered) return BotReply("")
+        val snapshot = persisted.snapshot
         val input = snapshot.input
         val current = core.findUserByChat(input.chatId)
         if (current?.status == "revoked") return BotReply(texts.get("access.revoked"))
         if (current != null && current.status !in setOf("active", "onboarding")) return BotReply(texts.get("access.revoked"))
         if (snapshot.user != null && current?.id != snapshot.user.id) return BotReply(texts.get("access.revoked"))
-        if (event.delivered) return BotReply("")
-        event.reply?.let { return it }
+        if (persisted.delivered) return BotReply("")
+        persisted.reply?.let { return it }
         val reply = process(snapshot)
         store.finishEvent(input.id, reply)
         return reply
@@ -78,6 +81,7 @@ class SystemHandler(
             snapshot.dialogue -> BotReply(texts.get("reply.unconfirmed"))
             user == null -> activate(input, command)
             input.text == null && input.callback == null -> BotReply(texts.get("reply.text_only"))
+            command == "/hard_delete" -> deleteUser(input, user.id)
             user.status == "onboarding" ->
                 if (command == "/version") {
                     BotReply(requireNotNull(dialogue.commandReply("/version", user)))
@@ -96,13 +100,23 @@ class SystemHandler(
         }
     }
 
+    private suspend fun deleteUser(
+        input: Incoming,
+        userId: Long,
+    ): BotReply {
+        if (input.chatId != adminChatId) return BotReply(texts.get("admin.forbidden"))
+        return hardDelete?.handle(input, userId) ?: BotReply(texts.get("hard_delete.disabled"))
+    }
+
     private fun commandReply(
         input: Incoming,
         user: CoreUser,
         command: String,
     ): BotReply {
         val reply = requireNotNull(dialogue.commandReply(input.text.orEmpty(), user))
-        return BotReply(if (command == "/help" && input.chatId == adminChatId) reply + "\n" + texts.get("admin.help") else reply)
+        if (command != "/help" || input.chatId != adminChatId) return BotReply(reply)
+        val deleteHelp = if (hardDelete != null) "\n" + texts.get("hard_delete.help") else ""
+        return BotReply(reply + "\n" + texts.get("admin.help") + deleteHelp)
     }
 
     private suspend fun activate(
