@@ -29,6 +29,7 @@ data class CoreConfig(
     val schedulerInterval: Duration,
     val lateThreshold: Duration,
     val inviteTtl: Duration = Duration.ofHours(DEFAULT_INVITE_TTL_HOURS),
+    val stand: String = "prod",
 ) {
     override fun toString(): String = "CoreConfig(httpPort=$httpPort, db=${database.url}, admin=${admin.chatId})"
 
@@ -62,8 +63,10 @@ data class CoreConfig(
                         Duration.ofSeconds(reader.int("THESEUS_SCHEDULER_INTERVAL_SECONDS", 30, 5..300).toLong()),
                     lateThreshold = Duration.ofMinutes(reader.int("THESEUS_LATE_THRESHOLD_MINUTES", 5, 1..1440).toLong()),
                     inviteTtl = Duration.ofHours(reader.int("THESEUS_INVITE_TTL_HOURS", 72, 1..720).toLong()),
+                    stand = env["THESEUS_STAND"] ?: "prod",
                 )
             reader.throwIfErrors()
+            if (config.stand !in setOf("test", "prod")) throw ConfigException("THESEUS_STAND: ожидается test | prod")
             return config
         }
     }

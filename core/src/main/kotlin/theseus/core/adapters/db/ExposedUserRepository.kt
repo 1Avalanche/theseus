@@ -8,7 +8,7 @@ import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
-import theseus.core.application.AccountsRepository
+import theseus.core.application.HardDeleteRepository
 import theseus.core.domain.user.AdminProfile
 import theseus.core.domain.user.Gender
 import theseus.core.domain.user.User
@@ -20,7 +20,7 @@ import java.time.ZoneId
 
 class ExposedUserRepository(
     private val db: CoreDatabase,
-) : AccountsRepository,
+) : HardDeleteRepository,
     theseus.core.application.InviteRepository by ExposedInviteRepository(db),
     theseus.core.application.UsageRepository by ExposedUsageRepository(db) {
     override suspend fun findById(id: Long): User? =
@@ -156,6 +156,41 @@ class ExposedUserRepository(
         }
         Unit
     }
+
+    @Suppress("MagicNumber") // Позиции параметров SQL.
+    override suspend fun eraseUser(id: Long) =
+        db.tx {
+            val jdbc = connection.connection as java.sql.Connection
+            // В квитанции тело хранится JSON-строкой; активация до назначения user_id тоже подлежит очистке.
+            val affected = """select id from operation_results where user_id=?
+            or (operation='POST /users/activate' and (result->>'body')::jsonb #>> '{user,id}'=?)
+            or (operation like 'POST /invites%' and (result->>'body')::jsonb ->> 'id' in
+                (select id::text from invites where used_by_user_id=?))
+            or operation='POST /users/' || ? || '/hard-delete'"""
+            jdbc.prepareStatement("insert into erased_operations(id) $affected on conflict do nothing").use {
+                it.setLong(1, id)
+                it.setString(2, id.toString())
+                it.setLong(3, id)
+                it.setString(4, id.toString())
+                it.executeUpdate()
+            }
+            val statements =
+                listOf(
+                    "delete from operation_results where id in (select id from erased_operations)",
+                    "delete from reminder_deliveries where user_id=?",
+                    "delete from reminders where user_id=?",
+                    "delete from llm_usage where user_id=?",
+                    "delete from invites where used_by_user_id=?",
+                    "delete from users where id=?",
+                )
+            statements.forEach { sql ->
+                jdbc.prepareStatement(sql).use {
+                    if ('?' in sql) it.setLong(1, id)
+                    it.executeUpdate()
+                }
+            }
+            Unit
+        }
 
     private fun ResultRow.toUser() =
         User(

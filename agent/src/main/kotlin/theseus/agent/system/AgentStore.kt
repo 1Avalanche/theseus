@@ -65,7 +65,7 @@ data class RestReply(
 }
 
 /** Долговечный журнал агента. Методы begin возвращают сохранённую запись при техническом повторе. */
-interface AgentStore {
+interface AgentStore : UserErasureStore {
     suspend fun findEvent(id: String): StoredEvent?
 
     suspend fun beginEvent(snapshot: EventSnapshot): StoredEvent
@@ -94,6 +94,22 @@ interface AgentStore {
     )
 
     suspend fun pendingOperations(): List<Outgoing>
+}
+
+/** Очистка пользовательских данных своей схемы с сохранением защиты от старых повторов. */
+interface UserErasureStore {
+    /** Удаляет содержательные записи; хэши старых ключей сохраняют защиту от повторов. */
+    suspend fun eraseUser(
+        userId: Long,
+        chatId: Long,
+        inviteIds: List<Long>,
+    )
+
+    /** После complete удаляет chatId из промежуточной квитанции удаления. */
+    suspend fun redactDeletion(
+        eventKey: String,
+        userId: Long,
+    )
 }
 
 /** Только internal REST; сервисный токен добавляется транспортом, в журнал не записывается. */

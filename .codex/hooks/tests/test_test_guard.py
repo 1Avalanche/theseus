@@ -134,11 +134,12 @@ class DecideTest(unittest.TestCase):
         self.write(".codex/hooks/tests/test_sample.py", "# тест")
         gradle, hooks = FakeGradle(), FakeGradle()
         test_guard.decide(self.project, False, gradle, hooks)
-        for path in (".codex/hooks.json", ".agents/skills/local-stand-check/scripts/check_logs.py"):
+        for path in (".codex/hooks.json", ".agents/skills/local-stand-check/scripts/check_logs.py",
+                     ".codex/scripts/gradle_check.py", ".codex/rules/commands.rules"):
             self.write(path, "changed")
             test_guard.decide(self.project, False, gradle, hooks)
         self.assertEqual(0, gradle.calls)
-        self.assertEqual(3, hooks.calls)
+        self.assertEqual(5, hooks.calls)
 
     def test_successful_gradle_does_not_hide_failed_python_tests(self):
         self.write("core/src/main/kotlin/A.kt", "class A")

@@ -9,7 +9,7 @@
 | Пакет | Содержимое |
 |---|---|
 | `domain` | `reminder` (`Reminder`, `NewReminder`, `When`, `WhenResolver`), `user` (`User`, `AdminProfile`, статусы, `Gender`), `DomainException` + `ErrorCode`, `LocalFormats`. Без инфраструктуры |
-| `application` | `ReminderService`, `UserService`, `AccountsService`, `Operations`, `ReminderScheduler`; порты репозиториев, `Notifier`, `HealthProbe`; время — инжектируемый `Clock` |
+| `application` | `ReminderService`, `UserService`, `AccountsService`, `HardDeleteService`, `Operations`, `ReminderScheduler`; порты репозиториев, `Notifier`, `HealthProbe`; время — инжектируемый `Clock`. `HardDeleteService` создаётся только для test |
 | `adapters.db` | Exposed + HikariCP + Flyway: `CoreDatabase`, `ExposedUserRepository`, `ExposedInviteRepository`, `ExposedUsageRepository`, `ExposedReminderRepository`, `DatabaseOperations` |
 | `adapters.mcp` | `McpServerFactory`, `ReminderTools`, DTO инструментов |
 | `adapters.http` | `HttpModule`: Bearer-авторизация, `/mcp`, `/health`, REST |
@@ -42,7 +42,7 @@
 
 ## Данные
 
-Схема `core`: `users`, `invites`, `reminders`, `reminder_deliveries`, `llm_usage`, `operation_results` — `docs/database.md`. Core мигрирует только эту схему. `V1` создаёт пользователей и напоминания; `V2` — инвайты, usage и результаты операций.
+Схема `core`: `users`, `invites`, `reminders`, `reminder_deliveries`, `llm_usage`, `operation_results`, `erased_operations` — `docs/database.md`. Core мигрирует только эту схему. `V1` создаёт пользователей и напоминания; `V2` — инвайты, usage и результаты операций; `V3` — идентификаторы удалённых операций.
 
 ## Уведомления
 

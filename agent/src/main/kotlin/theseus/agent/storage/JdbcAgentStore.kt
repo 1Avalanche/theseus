@@ -29,6 +29,7 @@ class JdbcAgentStore(
     private val cipher: JournalCipher,
     private val clock: Clock,
 ) : AgentStore,
+    theseus.agent.system.UserErasureStore by JdbcUserErasure(pool, cipher),
     AutoCloseable by pool {
     fun migrate() {
         Flyway
@@ -44,6 +45,7 @@ class JdbcAgentStore(
     override suspend fun beginEvent(snapshot: EventSnapshot): StoredEvent =
         pool.tx { connection ->
             val id = snapshot.input.id
+            if (connection.isErased("EVENT", id)) return@tx erasedEvent(id)
             connection
                 .prepareStatement(
                     """insert into incoming_events(id,user_id,chat_id,payload_encrypted,created_at) values (?,?,?,?,?)
@@ -67,6 +69,7 @@ class JdbcAgentStore(
 
     override suspend fun findEvent(id: String): StoredEvent? =
         pool.tx { connection ->
+            if (connection.isErased("EVENT", id)) return@tx erasedEvent(id)
             connection.prepareStatement("select * from incoming_events where id=?").use {
                 it.setString(1, id)
                 it.executeQuery().use { row -> if (row.next()) event(row, cipher) else null }
@@ -139,6 +142,9 @@ class JdbcAgentStore(
 
     override suspend fun beginOperation(operation: Outgoing): Pair<Outgoing, RestReply?> =
         pool.tx { connection ->
+            if (connection.isErased("OPERATION", operation.eventKey)) {
+                return@tx operation to RestReply(410, Json.parseToJsonElement("""{"error":{"code":"user_erased"}}""").jsonObject)
+            }
             connection
                 .prepareStatement(
                     """insert into outgoing_operations(id,event_key,user_id,method,path,request_encrypted,created_at)
@@ -219,7 +225,7 @@ class JdbcAgentStore(
     }
 }
 
-private suspend fun <T> HikariDataSource.tx(block: (Connection) -> T): T =
+internal suspend fun <T> HikariDataSource.tx(block: (Connection) -> T): T =
     withContext(Dispatchers.IO) {
         connection.use { connection ->
             connection.autoCommit = false
@@ -234,7 +240,7 @@ private suspend fun <T> HikariDataSource.tx(block: (Connection) -> T): T =
         }
     }
 
-private fun event(
+internal fun event(
     row: ResultSet,
     cipher: JournalCipher,
 ): StoredEvent {
@@ -246,7 +252,7 @@ private fun event(
     )
 }
 
-private fun outgoing(
+internal fun outgoing(
     row: ResultSet,
     cipher: JournalCipher,
 ): Outgoing {

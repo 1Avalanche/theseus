@@ -20,6 +20,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import theseus.core.application.AccountsService
+import theseus.core.application.HardDeleteService
 import theseus.core.application.OperationReply
 import theseus.core.application.OperationRequest
 import theseus.core.application.Operations
@@ -37,9 +38,11 @@ class AccountsRoutes(
     private val accounts: AccountsService,
     private val operations: Operations,
     private val clock: Clock,
+    private val hardDelete: HardDeleteService? = null,
 ) {
     fun install(route: Route) {
         userMutations(route)
+        hardDeleteRoutes(route)
         inviteRoutes(route)
         userList(route)
         usageMutation(route)
@@ -97,6 +100,51 @@ class AccountsRoutes(
                 }
             }
         }
+
+    private fun hardDeleteRoutes(route: Route) {
+        val deletion = hardDelete ?: return
+        with(route) {
+            post("/internal/v1/users/{id}/hard-delete") {
+                val id = call.validId() ?: return@post
+                mutate(
+                    call,
+                    "POST /users/$id/hard-delete",
+                    null,
+                    emptySet(),
+                    authorize = { deletion.requireOwner() },
+                ) {
+                    val (user, invites) = deletion.prepare(id)
+                    reply(
+                        HttpStatusCode.OK.value,
+                        buildJsonObject {
+                            put("id", user.id)
+                            put("chat_id", user.chatId)
+                            put("invite_ids", JsonArray(invites.map(::JsonPrimitive)))
+                        },
+                    )
+                }
+            }
+            post("/internal/v1/users/{id}/hard-delete/complete") {
+                val id = call.validId() ?: return@post
+                mutate(
+                    call,
+                    "POST /users/$id/hard-delete/complete",
+                    null,
+                    emptySet(),
+                    authorize = { deletion.requireOwner() },
+                ) {
+                    deletion.complete(id)
+                    reply(
+                        HttpStatusCode.OK.value,
+                        buildJsonObject {
+                            put("id", id)
+                            put("deleted", true)
+                        },
+                    )
+                }
+            }
+        }
+    }
 
     private fun inviteRoutes(route: Route) =
         with(route) {

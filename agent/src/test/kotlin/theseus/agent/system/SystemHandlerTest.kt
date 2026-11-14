@@ -29,9 +29,32 @@ class SystemHandlerTest {
     private val operations = OutgoingOperations(store, core)
     private val onboarding = Onboarding(store, operations, texts, clock, zones)
 
-    private fun handler() = SystemHandler(core, store, operations, onboarding, AdminCommands(core, operations, texts), 1, "test_bot", texts)
+    private fun handler(deletion: Boolean = false) =
+        SystemHandler(
+            core,
+            store,
+            operations,
+            onboarding,
+            AdminCommands(core, operations, texts),
+            1,
+            "test_bot",
+            texts,
+            if (deletion) HardDelete(core, store, operations, ChatLocks(), texts) else null,
+        )
 
     private val active = CoreUser(7, 7, "active", "Аня", "female", "Europe/Moscow")
+
+    @Test
+    fun `hard delete disabled on prod and non owner cannot delete during onboarding`() =
+        runTest {
+            core.user = active.copy(id = 1, chatId = 1)
+            assertEquals(texts.get("hard_delete.disabled"), handler().handle(Incoming("prod-delete", 1, "/hard_delete 7"))!!.text)
+            assertTrue(handler(true).handle(Incoming("test-help", 1, "/help"))!!.text.contains("/hard_delete"))
+            assertFalse(handler().handle(Incoming("prod-help", 1, "/help"))!!.text.contains("/hard_delete"))
+            core.user = active.copy(status = "onboarding", timezone = null)
+            assertEquals(texts.get("admin.forbidden"), handler(true).handle(Incoming("foreign-delete", 7, "/hard_delete 8"))!!.text)
+            assertTrue(core.requests.isEmpty())
+        }
 
     private class FakeCore :
         CoreClient,
@@ -183,11 +206,40 @@ class SystemHandlerTest {
                         ).jsonObject,
                 )
             val result = handler().handle(Incoming("activate", 7, "/start SECRET-CODE", "Аня"))!!
-            assertEquals(texts.get("onboarding.name"), result.text)
+            assertEquals(texts.get("reply.welcome") + "\n\n" + texts.get("onboarding.name"), result.text)
+            assertEquals(listOf(listOf(Button("Аня", "ob:name"))), result.buttons)
             assertTrue(result.adminNotice!!.contains("12"))
             assertFalse(result.adminNotice!!.contains("SECRET-CODE"))
             assertEquals("POST", core.requests.single().method)
             assertEquals("/users/activate", core.requests.single().path)
+        }
+
+    @Test
+    fun `start introduces capabilities before asking name without personal greeting`() =
+        runTest {
+            core.user = active.copy(status = "onboarding", name = null, timezone = null)
+
+            val reply = handler().handle(Incoming("first-start", 7, "/start", "Анна"))!!
+
+            assertTrue(reply.text.startsWith("Привет. Я Сири"))
+            val capabilities = reply.text.indexOf("разовые напоминания")
+            val nameQuestion = reply.text.indexOf("Как к тебе обращаться?")
+            assertTrue(capabilities >= 0 && nameQuestion > capabilities)
+            assertFalse(reply.text.contains("Привет, Анна"))
+            assertEquals(listOf(listOf(Button("Анна", "ob:name"))), reply.buttons)
+            assertTrue(core.requests.isEmpty())
+        }
+
+    @Test
+    fun `start resumes timezone step after name was already supplied`() =
+        runTest {
+            core.user = active.copy(status = "onboarding", timezone = null)
+
+            val reply = handler().handle(Incoming("resume-start", 7, "/start", "Анна"))!!
+
+            assertEquals(texts.get("onboarding.timezone"), reply.text)
+            assertTrue(reply.buttons.isNotEmpty())
+            assertTrue(core.requests.isEmpty())
         }
 
     @Test

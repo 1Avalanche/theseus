@@ -35,9 +35,11 @@ import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
 import theseus.core.adapters.http.AccountsRoutes
 import theseus.core.application.AccountsService
+import theseus.core.application.HardDeleteService
 import theseus.core.application.OperationReply
 import theseus.core.application.OperationRequest
 import theseus.core.config.DatabaseConfig
+import theseus.core.domain.user.AdminProfile
 import theseus.core.domain.user.Gender
 import java.time.Clock
 import java.time.Instant
@@ -69,9 +71,123 @@ class AccountsIntegrationTest {
         postgres.stop()
     }
 
-    private fun ApplicationTestBuilder.setUp() {
-        application { routing { AccountsRoutes(service, operations, clock).install(this) } }
+    private fun ApplicationTestBuilder.setUp(resetAdminChatId: Long? = null) {
+        val reset = resetAdminChatId?.let { HardDeleteService(repository, clock, it) }
+        application { routing { AccountsRoutes(service, operations, clock, reset).install(this) } }
     }
+
+    @Test fun `hard delete routes absent unless explicitly enabled`() =
+        testApplication {
+            setUp()
+            assertEquals(HttpStatusCode.NotFound, mutate("/users/1/hard-delete", "{}").status)
+            assertEquals(HttpStatusCode.NotFound, mutate("/users/1/hard-delete/complete", "{}").status)
+            assertEquals(HttpStatusCode.NotFound, mutate("/users/1/onboarding-reset", "{}").status)
+        }
+
+    @Test fun `hard delete removes user data and permits new invite while old replay remains erased`() =
+        testApplication {
+            setUp(991)
+            val admin = repository.ensureAdmin(AdminProfile(991, "", Gender.UNSPECIFIED, java.time.ZoneId.of("UTC")), now)
+            mutate("/users/${admin.id}", """{"name":"Владелец","timezone":"UTC"}""", method = HttpMethod.Patch)
+            val oldInvite = invite()
+            val activationKey = UUID.randomUUID()
+            val activationBody = """{"chat_id":992,"invite_code":"${oldInvite.str("code")}"}"""
+            val activated = mutate("/users/activate", activationBody, activationKey)
+            val user =
+                Json
+                    .parseToJsonElement(activated.bodyAsText())
+                    .jsonObject
+                    .getValue("user")
+                    .jsonObject
+            val id = user.str("id")
+            val patchKey = UUID.randomUUID()
+            mutate("/users/$id", """{"name":"PRIVATE-USER","timezone":"Europe/Moscow"}""", patchKey, HttpMethod.Patch)
+            val usage = """{"user_id":$id,"role":"main","model":"model","tokens_in":1,"tokens_out":1,"cost_usd":"0.1"}"""
+            assertEquals(HttpStatusCode.Created, mutate("/usage", usage).status)
+            val other = repository.createUser(993, Gender.UNSPECIFIED, now)
+            db.dataSource().connection.use { connection ->
+                connection
+                    .prepareStatement(
+                        """insert into reminders(user_id,text,timezone,start_local,status,next_fire_at,created_at,updated_at)
+                        values (?,'PRIVATE-REMINDER','UTC','2026-11-20 09:00','ACTIVE','2026-11-20 09:00Z',?,?) returning id""",
+                    ).use {
+                        it.setLong(1, id.toLong())
+                        it.setObject(2, now.atOffset(ZoneOffset.UTC))
+                        it.setObject(3, now.atOffset(ZoneOffset.UTC))
+                        it.executeQuery().use { row ->
+                            row.next()
+                            val reminderId = row.getLong(1)
+                            connection
+                                .prepareStatement(
+                                    """insert into reminder_deliveries(reminder_id,user_id,occurrence_at,kind,status,late,created_at)
+                                values (?,?,'2026-11-20 09:00Z','SCHEDULED','FAILED',false,?)""",
+                                ).use { delivery ->
+                                    delivery.setLong(1, reminderId)
+                                    delivery.setLong(2, id.toLong())
+                                    delivery.setObject(3, now.atOffset(ZoneOffset.UTC))
+                                    delivery.executeUpdate()
+                                }
+                        }
+                    }
+            }
+            val path = "/users/$id/hard-delete"
+            val prepareKey = UUID.randomUUID()
+            assertEquals(HttpStatusCode.Conflict, mutate("$path/complete", "{}").status)
+            assertEquals(HttpStatusCode.OK, mutate(path, "{}", prepareKey).status)
+            assertEquals("REVOKED", repository.findByChatId(992)!!.status.name)
+            val completeKey = UUID.randomUUID()
+            val complete = mutate("$path/complete", "{}", completeKey)
+            assertEquals(HttpStatusCode.OK, complete.status)
+            assertEquals(null, repository.findByChatId(992))
+            db.dataSource().connection.use { connection ->
+                for (table in listOf("reminders", "reminder_deliveries", "llm_usage")) {
+                    connection.prepareStatement("select count(*) from $table where user_id=?").use {
+                        it.setLong(1, id.toLong())
+                        it.executeQuery().use { row ->
+                            row.next()
+                            assertEquals(0, row.getInt(1))
+                        }
+                    }
+                }
+            }
+            assertEquals(other, repository.findByChatId(993))
+            assertTrue(service.usage(now.minusSeconds(1), now.plusSeconds(1)).none { it.userId == id.toLong() })
+            assertTrue(service.invites("all").none { it.id.toString() == oldInvite.str("id") })
+            assertEquals(HttpStatusCode.Gone, mutate("/users/activate", activationBody, activationKey).status)
+            assertEquals(
+                HttpStatusCode.Gone,
+                mutate("/users/$id", """{"name":"PRIVATE-USER","timezone":"Europe/Moscow"}""", patchKey, HttpMethod.Patch).status,
+            )
+            assertEquals(HttpStatusCode.Gone, mutate(path, "{}", prepareKey).status)
+            assertEquals(HttpStatusCode.NotFound, mutate("/users/activate", activationBody).status)
+            val fresh = invite()
+            val freshBody = """{"chat_id":992,"invite_code":"${fresh.str("code")}"}"""
+            val newUser =
+                Json
+                    .parseToJsonElement(mutate("/users/activate", freshBody).bodyAsText())
+                    .jsonObject
+                    .getValue("user")
+                    .jsonObject
+            assertFalse(newUser.str("id") == id)
+            assertEquals(JsonNull, newUser["name"])
+            assertEquals("onboarding", newUser.str("status"))
+            assertEquals(complete.bodyAsText(), mutate("$path/complete", "{}", completeKey).bodyAsText())
+            assertEquals(newUser.str("id"), repository.findByChatId(992)!!.id.toString())
+            assertEquals(HttpStatusCode.Conflict, mutate("/users/${admin.id}/hard-delete", "{}").status)
+            assertEquals(HttpStatusCode.NotFound, mutate("/users/999999/hard-delete", "{}").status)
+            db.dataSource().connection.use { connection ->
+                connection
+                    .prepareStatement(
+                        "select count(*) from operation_results where user_id=? or result::text like '%PRIVATE-USER%'",
+                    ).use {
+                        it.setLong(1, id.toLong())
+                        it.executeQuery().use { row ->
+                            row.next()
+                            assertEquals(0, row.getInt(1))
+                        }
+                    }
+            }
+        }
 
     private suspend fun ApplicationTestBuilder.mutate(
         path: String,

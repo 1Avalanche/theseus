@@ -32,6 +32,12 @@ class DatabaseOperations(
                 it.setLong(1, request.id.mostSignificantBits xor request.id.leastSignificantBits)
                 it.execute()
             }
+            val erased =
+                jdbc.prepareStatement("select 1 from erased_operations where id=?").use {
+                    it.setObject(1, request.id)
+                    it.executeQuery().use { row -> row.next() }
+                }
+            if (erased) return@atomic OperationReply(410, """{"error":{"code":"user_erased","message":"Данные удалены"}}""")
             authorize()
             val existing =
                 jdbc

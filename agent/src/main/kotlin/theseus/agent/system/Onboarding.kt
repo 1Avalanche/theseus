@@ -62,7 +62,7 @@ class Onboarding(
     ): BotReply =
         if (user.name == null) {
             BotReply(
-                texts.get("onboarding.name"),
+                texts.get("reply.welcome") + "\n\n" + texts.get("onboarding.name"),
                 firstName
                     ?.trim()
                     ?.takeIf(::validName)
