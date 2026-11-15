@@ -3,6 +3,7 @@ package theseus.core.adapters.mcp
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -22,6 +23,93 @@ import java.time.Instant
 import java.time.LocalTime
 
 class ReminderToolsTest {
+    @Test
+    fun `time only when updates series without losing calendar`() =
+        runTest {
+            tools.createReminder(1, args("""{"text":"Пить воду","recurrence":{"freq":"weekly","by_weekday":["MO","FR"],"time":"18:45"}}"""))
+            val result = change("""{"reminder_id":1,"scope":"series","when":{"time":"19:00"}}""")
+            assertFalse(result.isError, result.json)
+            val recurrence =
+                args(
+                    result.json,
+                ).getValue("reminder").jsonObject.getValue("schedule").jsonObject.getValue("recurrence").jsonObject
+            assertEquals("19:00", recurrence.getValue("time").jsonPrimitive.content)
+            assertEquals("weekly", recurrence.getValue("freq").jsonPrimitive.content)
+            assertEquals(
+                setOf("MO", "FR"),
+                recurrence
+                    .getValue("by_weekday")
+                    .jsonArray
+                    .map { it.jsonPrimitive.content }
+                    .toSet(),
+            )
+        }
+
+    @Test
+    fun `date only occurrence and new time preserve selected day and other occurrences`() =
+        runTest {
+            tools.createReminder(1, args("""{"text":"Пить воду","recurrence":{"freq":"daily","time":"18:45"}}"""))
+            val result = change("""{"reminder_id":1,"scope":"occurrence","occurrence_local":"2026-11-03","when":{"time":"20:00"}}""")
+            assertFalse(result.isError, result.json)
+            assertTrue(result.json.contains("2026-11-03T20:00"), result.json)
+            val tomorrow = tools.call("list_reminders", 1, args("""{"from":"2026-11-03","to":"2026-11-03"}"""), null)
+            assertTrue(tomorrow.json.contains("2026-11-03T20:00"), tomorrow.json)
+            assertFalse(tomorrow.json.contains("\"at_local\":\"2026-11-03T18:45\""), tomorrow.json)
+            val dayAfter = tools.call("list_reminders", 1, args("""{"from":"2026-11-04","to":"2026-11-04"}"""), null)
+            assertTrue(dayAfter.json.contains("\"at_local\":\"2026-11-04T18:45\""), dayAfter.json)
+        }
+
+    @Test
+    fun `impossible dates in list recurrence and occurrence get specific error`() =
+        runTest {
+            assertEquals(
+                "invalid_date",
+                errorCode(tools.call("list_reminders", 1, args("""{"from":"2026-11-31","to":"2026-11-31"}"""), null)),
+            )
+            assertEquals(
+                "invalid_date",
+                errorCode(tools.createReminder(1, args("""{"text":"X","recurrence":{"freq":"daily","until":"2026-11-31"}}"""))),
+            )
+            tools.createReminder(1, args("""{"text":"Пить воду","recurrence":{"freq":"daily","time":"18:45"}}"""))
+            assertEquals(
+                "invalid_date",
+                errorCode(change("""{"reminder_id":1,"scope":"occurrence","occurrence_local":"2026-11-31","when":{"time":"20:00"}}""")),
+            )
+        }
+
+    @Test
+    fun `delete all rejects target fields and requires confirmation`() =
+        runTest {
+            val key =
+                java.util.UUID
+                    .randomUUID()
+                    .toString()
+            assertEquals("invalid_arguments", errorCode(tools.call("delete_reminder", 1, args("""{"scope":"all","reminder_id":1}"""), key)))
+            assertEquals(
+                "confirmation_required",
+                errorCode(
+                    tools.call(
+                        "delete_reminder",
+                        1,
+                        args("""{"scope":"all"}"""),
+                        java.util.UUID
+                            .randomUUID()
+                            .toString(),
+                    ),
+                ),
+            )
+        }
+
+    private suspend fun change(value: String) =
+        tools.call(
+            "update_reminder",
+            1,
+            args(value),
+            java.util.UUID
+                .randomUUID()
+                .toString(),
+        )
+
     private val clock = MutableClock(Instant.parse("2026-11-02T07:15:42Z"))
     private val tools =
         ReminderTools(
@@ -99,9 +187,9 @@ class ReminderToolsTest {
         }
 
     @Test
-    fun `malformed date is invalid arguments`() =
+    fun `malformed date has specific error`() =
         runTest {
-            assertEquals("invalid_arguments", errorCode(tools.createReminder(1, args("""{"text":"X","when":{"date":"2026-13-01"}}"""))))
+            assertEquals("invalid_date", errorCode(tools.createReminder(1, args("""{"text":"X","when":{"date":"2026-13-01"}}"""))))
         }
 
     @Test

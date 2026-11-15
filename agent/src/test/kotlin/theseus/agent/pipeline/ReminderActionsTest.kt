@@ -36,6 +36,75 @@ import java.time.ZoneOffset
 import java.util.UUID
 
 class ReminderActionsTest {
+    @Test
+    fun `delete all handles empty list and refuses unsupported records before proposing`() =
+        runTest {
+            core.emptyList = true
+            val empty = requireNotNull(actions.execute(owner, "delete_reminder", args("""{"scope":"all"}"""), "message:empty").reply)
+            assertEquals(texts.get("reminders.empty"), empty.text)
+            assertTrue(empty.buttons.isEmpty())
+            core.unsupportedCount = 1
+            val blocked = requireNotNull(actions.execute(owner, "delete_reminder", args("""{"scope":"all"}"""), "message:unknown").reply)
+            assertEquals(texts.get("reply.error.unsupported_state"), blocked.text)
+            assertTrue(blocked.buttons.isEmpty())
+            assertTrue(store.pendingOperations().isEmpty())
+            assertTrue(core.mutations.isEmpty())
+        }
+
+    @Test
+    fun `delete all previews full snapshot and confirms once using saved operation id`() =
+        runTest {
+            val card = requireNotNull(actions.execute(owner, "delete_reminder", args("""{"scope":"all"}"""), "message:all").reply)
+            assertTrue(card.text.contains("(2)"), card.text)
+            assertEquals(
+                "Удалить все",
+                card.buttons
+                    .single()
+                    .first()
+                    .text,
+            )
+            assertTrue(core.mutations.isEmpty())
+            assertEquals(listOf("list_reminders"), core.reads.map { it.second })
+            val result = requireNotNull(actions.callback(callback(card, true), owner))
+            assertEquals("Удалил все текущие напоминания: 2.", result.text)
+            assertEquals(args("""{"scope":"all"}"""), core.mutations.single().arguments)
+            assertEquals(
+                "all-fingerprint",
+                core.mutations
+                    .single()
+                    .confirmation!!
+                    .getValue("fingerprint")
+                    .jsonPrimitive.content,
+            )
+            assertEquals(result, actions.callback(callback(card, true, "callback:replay"), owner))
+            assertEquals(1, core.mutations.size)
+        }
+
+    @Test
+    fun `delete all cancellation never sends mutating request`() =
+        runTest {
+            val card = requireNotNull(actions.execute(owner, "delete_reminder", args("""{"scope":"all"}"""), "message:all").reply)
+            assertEquals(texts.get("confirmation.cancelled"), actions.callback(callback(card, false), owner)!!.text)
+            assertTrue(core.mutations.isEmpty())
+        }
+
+    @Test
+    fun `time only series update also prepares reset card when exclusions exist`() =
+        runTest {
+            core.requiresSeriesReset = true
+            val result =
+                actions.execute(
+                    owner,
+                    "update_reminder",
+                    args("""{"reminder_id":7,"scope":"series","when":{"time":"19:00"}}"""),
+                    "message:time",
+                )
+            assertNotNull(result.reply)
+            assertTrue(requireNotNull(result.reply).text.contains("Изменить расписание"))
+            assertTrue(requireNotNull(result.reply).text.contains("19:00"))
+            assertEquals(0, core.domainWrites)
+        }
+
     private val owner = CoreUser(7, 4242, "active", "Аня", "female", "Europe/Moscow")
     private val clock = TestClock(Instant.parse("2026-11-02T07:15:00Z"))
     private val texts = Texts.load("texts/agent.properties")
@@ -334,6 +403,8 @@ class ReminderActionsTest {
         val mutations = mutableListOf<Mutation>()
         private val committed = mutableMapOf<UUID, ToolResult>()
         var possibleDuplicate = false
+        var emptyList = false
+        var unsupportedCount = 0
         var requiresSeriesReset = false
         var loseNextReply = false
         var domainWrites = 0
@@ -349,6 +420,13 @@ class ReminderActionsTest {
             arguments: JsonObject,
         ): ToolResult {
             reads += userId to name
+            if (name == "list_reminders") {
+                val rows = if (emptyList) "" else "$reminder,$recurring"
+                return ToolResult(
+                    """{"reminders":[$rows],"fingerprint":"all-fingerprint","unsupported_count":$unsupportedCount}""",
+                    false,
+                )
+            }
             check(name == "get_reminder")
             val shownReminder = if (requiresSeriesReset) recurring else reminder
             val effects = if (requiresSeriesReset) 1 else 0
@@ -379,8 +457,12 @@ class ReminderActionsTest {
                         )
                     } else {
                         domainWrites++
-                        val status = if (name == "delete_reminder") "deleted" else "created"
-                        ToolResult("""{"status":"$status","reminder":$reminder,"warnings":[]}""", false)
+                        if (name == "delete_reminder" && arguments["scope"] == JsonPrimitive("all")) {
+                            ToolResult("""{"status":"deleted_all","deleted_count":2}""", false)
+                        } else {
+                            val status = if (name == "delete_reminder") "deleted" else "created"
+                            ToolResult("""{"status":"$status","reminder":$reminder,"warnings":[]}""", false)
+                        }
                     }
                 }
             if (loseNextReply) {

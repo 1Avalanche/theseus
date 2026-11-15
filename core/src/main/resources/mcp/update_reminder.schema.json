@@ -13,7 +13,8 @@
       ]
     },
     "occurrence_local": {
-      "type": "string"
+      "type": "string",
+      "description": "Исходное срабатывание: YYYY-MM-DDTHH:MM или YYYY-MM-DD. Для даты исходный час серии выбирает core."
     },
     "text": {
       "type": "string"

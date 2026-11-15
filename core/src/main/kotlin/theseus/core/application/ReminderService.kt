@@ -37,6 +37,8 @@ data class ReminderList(
     val reminders: List<Reminder>,
     val occurrences: List<Pair<Long, LocalDateTime>>?,
     val truncated: Boolean = false,
+    val fingerprint: String? = null,
+    val unsupportedCount: Int = 0,
 )
 
 data class ReminderChange(
@@ -182,13 +184,16 @@ class ReminderService(
             if (from != null) {
                 if (to!! < from || Duration.between(from.atStartOfDay(), to.atStartOfDay()).toDays() >= MAX_PERIOD_DAYS) invalid()
             }
+            val stored = reminders.list(userId)
+            val unsupportedCount = stored.count { it.status == ReminderStatus.UNSUPPORTED }
             val rows =
-                active(userId)
+                stored
+                    .filter { it.status in setOf(ReminderStatus.ACTIVE, ReminderStatus.PAUSED) }
                     .filter { includePaused || it.status != ReminderStatus.PAUSED }
                     .sortedWith(
                         compareBy<Reminder> { it.status == ReminderStatus.PAUSED }.thenBy(nullsLast()) { it.nextFireAt }.thenBy { it.id },
                     )
-            if (from == null) return@atomic ReminderList(rows, null)
+            if (from == null) return@atomic ReminderList(rows, null, fingerprint = fingerprint(rows), unsupportedCount = unsupportedCount)
             val occurrences =
                 rows
                     .flatMap { reminder ->
@@ -210,7 +215,12 @@ class ReminderService(
                             .map { reminder.id to LocalDateTime.ofInstant(it, reminder.timezone) }
                     }.sortedWith(compareBy<Pair<Long, LocalDateTime>> { it.second }.thenBy { it.first })
             val limited = occurrences.take(MAX_OCCURRENCES)
-            ReminderList(rows.filter { row -> limited.any { it.first == row.id } }, limited, occurrences.size > MAX_OCCURRENCES)
+            ReminderList(
+                rows.filter { row -> limited.any { it.first == row.id } },
+                limited,
+                occurrences.size > MAX_OCCURRENCES,
+                unsupportedCount = unsupportedCount,
+            )
         }
 
     suspend fun find(
@@ -307,7 +317,17 @@ class ReminderService(
         now: Instant,
     ): ReminderChange {
         val occurrence = occurrence(old, local, now)
-        val target = at?.let { resolver.resolve(it, now, old.timezone) }
+        val target =
+            at?.let {
+                val hasTime = it.time != null || it.partOfDay != null
+                val dated =
+                    if (it.date == null && it.after == null && hasTime) {
+                        it.copy(date = LocalDateTime.ofInstant(occurrence, old.timezone).toLocalDate())
+                    } else {
+                        it
+                    }
+                resolver.resolve(dated, now, old.timezone)
+            }
         val newLocal = target?.local ?: LocalDateTime.ofInstant(occurrence, old.timezone)
         val child =
             reminders.create(
@@ -389,6 +409,24 @@ class ReminderService(
                 )
             }
             reminders.save(old.copy(status = ReminderStatus.DELETED, nextFireAt = null, snoozedUntil = null, pausedUntil = null), now)
+        }
+
+    /** Удаляет весь подтверждённый набор атомарно; новые или изменённые записи делают карточку устаревшей. */
+    suspend fun deleteAll(
+        userId: Long,
+        confirmation: Confirmation?,
+    ): Int =
+        atomic(userId) {
+            val all = reminders.list(userId)
+            if (all.any { it.status == ReminderStatus.UNSUPPORTED }) throw DomainException(ErrorCode.UNSUPPORTED_STATE)
+            val targets = all.filter { it.status in setOf(ReminderStatus.ACTIVE, ReminderStatus.PAUSED) }
+            verify(confirmation, fingerprint(targets))
+            val now = clock.instant()
+            if (targets.any { it.nextFireAt != null && it.nextFireAt <= now }) throw DomainException(ErrorCode.CONFIRMATION_STALE)
+            targets.forEach {
+                reminders.save(it.copy(status = ReminderStatus.DELETED, nextFireAt = null, snoozedUntil = null, pausedUntil = null), now)
+            }
+            targets.size
         }
 
     suspend fun snooze(

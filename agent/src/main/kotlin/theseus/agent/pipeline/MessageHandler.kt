@@ -123,17 +123,17 @@ class MessageHandler(
             return BotReply(texts.get(if (messages.any { it.role == Role.TOOL }) "reply.unconfirmed" else "reply.not_created"))
         }
         messages += response.message
-        val results = calls.mapIndexed { index, call -> call to execute(user, call, "$usageKey:tool:$index") }
+        val targetChanges = calls.filter { it.name in TARGET_CHANGES }
+        val candidates = messages.lastOrNull { it.role == Role.TOOL && it.content?.contains("\"candidates\"") == true }?.content
+        val results =
+            if (targetChanges.size > 1) {
+                listOf(calls.first() to ReminderExecution(null, BotReply(renderer.choices(candidates, zone, now))))
+            } else {
+                calls.mapIndexed { index, call -> call to execute(user, call, "$usageKey:tool:$index") }
+            }
         val rendered =
             results.map { (call, execution) ->
-                val result = execution.result
-                when {
-                    execution.reply != null -> execution.reply.text
-                    result == null || result.isError -> null
-                    call.name == "find_reminders" -> null
-                    call.name == DialogReplies.TOOL_NAME -> result.text
-                    else -> renderer.render(call.name, result.text, zone, now)
-                }
+                render(call, execution, candidates, zone, now)
             }
         val renderedReplies = rendered.filterNotNull()
         log.info("Обработаны инструменты, user_id={}, calls={}, rendered={}", user.id, calls.size, renderedReplies.size)
@@ -153,6 +153,25 @@ class MessageHandler(
                 messages += ChatMessage(Role.TOOL, requireNotNull(result.result).text, toolCallId = call.id)
             }
             null
+        }
+    }
+
+    private fun render(
+        call: ToolCall,
+        execution: ReminderExecution,
+        candidates: String?,
+        zone: ZoneId,
+        now: Instant,
+    ): String? {
+        val result = execution.result
+        return when {
+            execution.reply != null -> execution.reply.text
+            result == null -> null
+            result.isError -> renderer.error(result.text)
+            call.name == "find_reminders" -> null
+            call.name == DialogReplies.TOOL_NAME ->
+                if (result.text == texts.get("reply.choose_reminder")) renderer.choices(candidates, zone, now) else result.text
+            else -> renderer.render(call.name, result.text, zone, now)
         }
     }
 
@@ -180,5 +199,6 @@ class MessageHandler(
 
     companion object {
         const val DEFAULT_MAX_TOOL_ROUNDS = 2
+        private val TARGET_CHANGES = setOf("update_reminder", "delete_reminder", "snooze_reminder", "pause_reminder", "resume_reminder")
     }
 }
