@@ -2,7 +2,7 @@
 
 Сервис данных и домена: напоминания, пользователи, доступ, учёт usage, планировщик, уведомления (`Notifier` → Telegram). Наружу — MCP (инструменты для LLM) и internal REST (системные вызовы агента, не-ИИ клиенты). Архитектура — `docs/architecture.md`, решения — `docs/DECISIONS.md` (разделы 2–5, 7).
 
-**Статус:** этап 4 реализован и проверен локально; текущая версия исходников с исправлениями после ручной проверки — `0.4.1`. Gradle-модуль `:core`, плагины `theseus.application` + `theseus.serialization`, точка входа `theseus.core.MainKt`. Проверки и их границы — `docs/roadmap.md`.
+**Статус:** этап 4 завершён и принят владельцем после ручной проверки `0.4.1` на test-боте. Gradle-модуль `:core`, плагины `theseus.application` + `theseus.serialization`, точка входа `theseus.core.MainKt`. Проверки и их границы — `docs/roadmap.md`.
 
 ## Пакеты `theseus.core`
 

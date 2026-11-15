@@ -2,7 +2,7 @@
 
 Telegram-бот (long polling) и LLM-пайплайн через OpenRouter. Архитектура — `docs/architecture.md`, решения — `docs/DECISIONS.md` (разделы 2, 6, 8, 9).
 
-**Статус:** этап 4 реализован и проверен локально; текущая версия исходников с исправлениями после ручной проверки — `0.4.1`. Gradle-модуль `:agent`, плагины `theseus.application` + `theseus.serialization`, точка входа `theseus.agent.MainKt`. Проверки и их границы — `docs/roadmap.md`.
+**Статус:** этап 4 завершён и принят владельцем после ручной проверки `0.4.1` на test-боте. Gradle-модуль `:agent`, плагины `theseus.application` + `theseus.serialization`, точка входа `theseus.agent.MainKt`. Проверки и их границы — `docs/roadmap.md`.
 
 ## Пакеты `theseus.agent`
 
