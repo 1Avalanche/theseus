@@ -2,12 +2,14 @@ package theseus.agent.telegram
 
 import dev.inmo.tgbotapi.bot.TelegramBot
 import dev.inmo.tgbotapi.extensions.api.answers.answerCallbackQuery
+import dev.inmo.tgbotapi.extensions.api.edit.reply_markup.editMessageReplyMarkup
 import dev.inmo.tgbotapi.extensions.api.send.sendActionTyping
 import dev.inmo.tgbotapi.extensions.api.send.sendTextMessage
 import dev.inmo.tgbotapi.extensions.behaviour_builder.buildBehaviourWithLongPolling
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onContentMessage
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onMessageDataCallbackQuery
 import dev.inmo.tgbotapi.types.ChatId
+import dev.inmo.tgbotapi.types.MessageId
 import dev.inmo.tgbotapi.types.RawChatId
 import dev.inmo.tgbotapi.types.buttons.InlineKeyboardButtons.CallbackDataInlineKeyboardButton
 import dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup
@@ -54,13 +56,29 @@ class TelegramBotRunner(
             onContentMessage { message ->
                 val chat = message.chat as? PrivateChat ?: return@onContentMessage
                 val chatId = chat.id.chatId.long
-                process(Incoming("message:$chatId:${message.messageId}", chatId, (message.content as? TextContent)?.text, chat.firstName))
+                process(
+                    Incoming(
+                        "message:$chatId:${message.messageId}",
+                        chatId,
+                        (message.content as? TextContent)?.text,
+                        chat.firstName,
+                        replyMessageId = message.replyTo?.messageId?.long,
+                    ),
+                )
             }
             onMessageDataCallbackQuery { query ->
                 val chat = query.message.chat as? PrivateChat ?: return@onMessageDataCallbackQuery
                 if (query.from.id.chatId != chat.id.chatId) return@onMessageDataCallbackQuery
                 bot.answerCallbackQuery(query)
-                process(Incoming("callback:${query.id}", chat.id.chatId.long, firstName = query.from.firstName, callback = query.data))
+                process(
+                    Incoming(
+                        "callback:${query.id}",
+                        chat.id.chatId.long,
+                        firstName = query.from.firstName,
+                        callback = query.data,
+                        callbackMessageId = query.message.messageId.long,
+                    ),
+                )
             }
         }
     }
@@ -81,7 +99,7 @@ class TelegramBotRunner(
                 bot.sendActionTyping(ChatId(RawChatId(input.chatId)))
                 val response =
                     handler
-                        .handleReply(input.chatId, requireNotNull(input.text), input.id) ?: system.resume(event)
+                        .handleReply(input.chatId, requireNotNull(input.text), input.id, input.replyMessageId) ?: system.resume(event)
                 store.finishEvent(input.id, response)
                 send(input.chatId, response)
                 store.delivered(input.id)
@@ -92,6 +110,14 @@ class TelegramBotRunner(
         chatId: Long,
         reply: BotReply,
     ) {
+        reply.clearKeyboardMessageId?.let {
+            try {
+                bot.editMessageReplyMarkup(ChatId(RawChatId(chatId)), MessageId(it), replyMarkup = null)
+            } catch (e: dev.inmo.tgbotapi.bot.exceptions.RequestException) {
+                // Повтор снятия уже снятой клавиатуры и удалённое уведомление не отменяют результат core.
+                if (e.response.errorCode != BAD_REQUEST) throw e
+            }
+        }
         if (reply.text.isNotBlank()) {
             val keyboard =
                 reply.buttons.takeIf { it.isNotEmpty() }?.let { rows ->
@@ -141,6 +167,7 @@ class TelegramBotRunner(
     }
 
     companion object {
+        private const val BAD_REQUEST = 400
         private const val RECOVERY_INTERVAL_MS = 30_000L
     }
 }

@@ -77,6 +77,13 @@ fun main() {
         HttpDependencies(
             serviceToken = config.serviceToken,
             health = database,
+            deliveries =
+                theseus.core.adapters.http.DeliveryRoutes(
+                    theseus.core.application.DeliveryService(reminderRepository, reminders, clock),
+                    reminders,
+                    DatabaseOperations(database),
+                    clock,
+                ),
             users = users,
             mcpServer = McpServerFactory.create(ReminderTools(reminders, texts, DatabaseOperations(database))),
             accounts =

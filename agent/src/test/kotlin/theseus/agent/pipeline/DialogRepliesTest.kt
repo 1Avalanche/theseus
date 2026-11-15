@@ -81,11 +81,11 @@ class DialogRepliesTest {
     }
 
     @Test
-    fun `clarification requests complete input because history is not available`() {
+    fun `clarification asks for missing part without discarding dialogue context`() {
         val result = replies.execute(user, Json.parseToJsonElement("""{"topic":"clarify"}""").jsonObject)
 
         assertFalse(result.isError)
         assertEquals(texts.get("reply.clarify"), result.text)
-        assertTrue(result.text.contains("целиком"))
+        assertTrue(result.text.contains("недостающую часть"))
     }
 }

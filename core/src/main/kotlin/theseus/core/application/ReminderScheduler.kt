@@ -177,11 +177,12 @@ class ReminderScheduler(
         kind: DeliveryKind,
         late: Boolean,
     ): DeliveryRecord? {
-        val result = notifier.send(chatId, render(reminder.copy(nextFireAt = occurrenceAt), late))
+        val deliveryId = reminders.nextDeliveryId()
+        val result = notifier.send(chatId, render(reminder.copy(nextFireAt = occurrenceAt), late), deliveryId)
         return when (result) {
-            is NotifyResult.Sent -> DeliveryRecord(occurrenceAt, kind, DeliveryStatus.SENT, late, result.messageId, null)
+            is NotifyResult.Sent -> DeliveryRecord(occurrenceAt, kind, DeliveryStatus.SENT, late, result.messageId, null, deliveryId)
             is NotifyResult.Failed if result.permanent ->
-                DeliveryRecord(occurrenceAt, kind, DeliveryStatus.FAILED, late, null, result.reason)
+                DeliveryRecord(occurrenceAt, kind, DeliveryStatus.FAILED, late, null, result.reason, deliveryId)
             is NotifyResult.Failed -> {
                 log.warn("Напоминание {} не доставлено, повтор на следующем тике: {}", reminder.id, result.reason)
                 return null

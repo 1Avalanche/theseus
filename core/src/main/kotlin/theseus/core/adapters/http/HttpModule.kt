@@ -29,6 +29,7 @@ class HttpDependencies(
     val users: UserService,
     val mcpServer: Server,
     val accounts: AccountsRoutes? = null,
+    val deliveries: DeliveryRoutes? = null,
 )
 
 fun Application.coreModule(deps: HttpDependencies) {
@@ -37,6 +38,7 @@ fun Application.coreModule(deps: HttpDependencies) {
     mcpStatelessStreamableHttp(path = "/mcp", enableDnsRebindingProtection = false) { deps.mcpServer }
     routing {
         deps.accounts?.install(this)
+        deps.deliveries?.install(this)
         get("/health") {
             if (deps.health.isHealthy()) {
                 call.respondJson(HttpStatusCode.OK, """{"status":"ok"}""")

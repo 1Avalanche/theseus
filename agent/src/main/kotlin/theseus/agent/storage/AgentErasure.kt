@@ -26,6 +26,11 @@ internal class AgentErasure(
         inviteIds: List<Long>,
     ) {
         val affectedOperations = findOperations(userId, chatId, inviteIds)
+        connection.prepareStatement("delete from dialog_sessions where user_id=? or chat_id=?").use {
+            it.setLong(1, userId)
+            it.setLong(2, chatId)
+            it.executeUpdate()
+        }
         val events = findEvents(userId, chatId, affectedOperations)
         val operationKeys = findRelatedOperations(affectedOperations, events)
         events.forEach { eraseRecord("EVENT", "incoming_events", "id", it) }

@@ -23,6 +23,8 @@ data class AgentConfig(
     val databasePassword: String = "",
     val journalKey: String = "",
     val stand: String = "prod",
+    val summaryModels: List<String> = mainModels,
+    val contextTokens: Int = 18000,
     val timezoneButtons: List<Pair<String, String>> = listOf("Москва" to "Europe/Moscow", "Екатеринбург" to "Asia/Yekaterinburg"),
 ) {
     override fun toString(): String = "AgentConfig(coreUrl=$coreUrl, mainModels=$mainModels)"
@@ -30,6 +32,8 @@ data class AgentConfig(
     companion object {
         private const val MIN_TOKEN_LENGTH = 32
         private const val MAX_MODELS = 3
+        private const val MIN_CONTEXT_TOKENS = 4000
+        private const val DEFAULT_CONTEXT_TOKENS = 18000
         private val LLM_TIMEOUT_RANGE = 5L..300L
 
         private const val MAX_ZONE_BUTTONS = 6
@@ -73,6 +77,21 @@ data class AgentConfig(
             return zones
         }
 
+        private fun readLlmSettings(
+            env: Map<String, String>,
+            models: List<String>,
+            errors: MutableList<String>,
+        ): Pair<List<String>, Int> {
+            val summary = env["THESEUS_LLM_SUMMARY_MODELS"]?.takeIf { it.isNotBlank() } ?: models.joinToString(",")
+            val summaryModels = summary.split(',').map(String::trim).filter(String::isNotEmpty)
+            if (summaryModels.size !in 1..MAX_MODELS) errors += "THESEUS_LLM_SUMMARY_MODELS: от 1 до 3 моделей"
+            val contextTokens = (env["THESEUS_LLM_CONTEXT_TOKENS"] ?: "18000").toIntOrNull()
+            if (contextTokens == null || contextTokens < MIN_CONTEXT_TOKENS) {
+                errors += "THESEUS_LLM_CONTEXT_TOKENS: целое число от $MIN_CONTEXT_TOKENS"
+            }
+            return summaryModels to (contextTokens ?: DEFAULT_CONTEXT_TOKENS)
+        }
+
         fun fromEnv(env: Map<String, String>): AgentConfig {
             val errors = mutableListOf<String>()
 
@@ -96,6 +115,7 @@ data class AgentConfig(
                 errors += "THESEUS_LLM_MAIN_MODELS: от 1 до $MAX_MODELS моделей через запятую"
             }
             val timeout = optional("THESEUS_LLM_TIMEOUT_SECONDS", "60").toLongOrNull()
+            val (summaryModels, contextTokens) = readLlmSettings(env, models, errors)
             if (timeout == null || timeout !in LLM_TIMEOUT_RANGE) errors += "THESEUS_LLM_TIMEOUT_SECONDS: ожидается $LLM_TIMEOUT_RANGE"
             val adminId = readAdminId(required("THESEUS_ADMIN_CHAT_ID"), errors)
             val journalKey = required("THESEUS_JOURNAL_KEY")
@@ -110,6 +130,8 @@ data class AgentConfig(
                     openRouterUrl = optional("THESEUS_OPENROUTER_URL", "https://openrouter.ai/api/v1").trimEnd('/'),
                     openRouterApiKey = required("THESEUS_OPENROUTER_API_KEY"),
                     mainModels = models,
+                    summaryModels = summaryModels,
+                    contextTokens = contextTokens,
                     llmTimeout = Duration.ofSeconds(timeout ?: 60),
                     healthFile = Path.of(optional("THESEUS_HEALTH_FILE", "/tmp/theseus-agent.health")),
                     adminChatId = adminId ?: 0,

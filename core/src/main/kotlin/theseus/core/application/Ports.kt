@@ -22,7 +22,18 @@ interface UserRepository {
     ): User
 }
 
+@Suppress("TooManyFunctions") // Порт напоминаний и их доставок.
 interface ReminderRepository {
+    /** Резервирует id до отправки Telegram; пропуски последовательности допустимы. */
+    suspend fun nextDeliveryId(): Long
+
+    /** Поиск доставки всегда ограничен пользователем. */
+    suspend fun delivery(
+        userId: Long,
+        id: Long? = null,
+        messageId: Long? = null,
+    ): DeliveryReference?
+
     /** Блокировка пользователя сериализует планировщик и изменения его напоминаний в одной транзакции. */
     suspend fun <T> withUserLock(
         userId: Long,
@@ -75,6 +86,13 @@ interface ReminderRepository {
     )
 }
 
+/** Связь уведомления с конкретным срабатыванием, без пользовательского текста. */
+data class DeliveryReference(
+    val id: Long,
+    val reminderId: Long,
+    val occurrenceAt: Instant,
+)
+
 /** Наступившие активные срабатывания; завершённые и будущие сюда не входят. */
 data class DeliveryBacklog(
     val count: Long,
@@ -88,6 +106,12 @@ fun interface HealthProbe {
 
 /** Канал доставки уведомлений пользователю. v1 — Telegram. */
 interface Notifier {
+    suspend fun send(
+        chatId: Long,
+        text: String,
+        deliveryId: Long,
+    ): NotifyResult = send(chatId, text)
+
     suspend fun send(
         chatId: Long,
         text: String,

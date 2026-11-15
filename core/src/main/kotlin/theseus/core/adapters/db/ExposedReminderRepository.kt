@@ -17,9 +17,50 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 
 /** JDBC внутри транзакций Exposed; исключения хранятся штатным PostgreSQL timestamptz[]. */
+@Suppress("TooManyFunctions") // Единый репозиторий напоминаний и журнала доставок.
 class ExposedReminderRepository(
     private val db: CoreDatabase,
 ) : ReminderRepository {
+    override suspend fun nextDeliveryId(): Long =
+        db.tx {
+            val jdbc = connection.connection as Connection
+            jdbc.createStatement().use { statement ->
+                statement.executeQuery("select nextval('reminder_deliveries_id_seq')").use { row ->
+                    check(row.next())
+                    row.getLong(1)
+                }
+            }
+        }
+
+    override suspend fun delivery(
+        userId: Long,
+        id: Long?,
+        messageId: Long?,
+    ): theseus.core.application.DeliveryReference? =
+        db.tx {
+            require((id == null) != (messageId == null))
+            val jdbc = connection.connection as Connection
+            val column = if (id != null) "id" else "telegram_message_id"
+            jdbc
+                .prepareStatement(
+                    "select id,reminder_id,occurrence_at from reminder_deliveries where user_id=? and $column=? and status='SENT'",
+                ).use {
+                    it.setLong(1, userId)
+                    it.setLong(2, id ?: requireNotNull(messageId))
+                    it.executeQuery().use { row ->
+                        if (row.next()) {
+                            theseus.core.application.DeliveryReference(
+                                row.getLong(1),
+                                row.getLong(2),
+                                row.getObject(3, OffsetDateTime::class.java).toInstant(),
+                            )
+                        } else {
+                            null
+                        }
+                    }
+                }
+        }
+
     override suspend fun <T> withUserLock(
         userId: Long,
         block: suspend () -> T,
@@ -141,7 +182,8 @@ class ExposedReminderRepository(
                 jdbc
                     .prepareStatement(
                         """insert into reminder_deliveries(reminder_id,user_id,occurrence_at,kind,status,late,sent_at,
-                        telegram_message_id,error,created_at) values(?,?,?,?,?,?,?,?,?,?) on conflict do nothing""",
+                        telegram_message_id,error,created_at,id) overriding system value
+                        values(?,?,?,?,?,?,?,?,?,?,coalesce(?,nextval('reminder_deliveries_id_seq'))) on conflict do nothing""",
                     ).use {
                         it.setLong(1, reminder.id)
                         it.setLong(2, reminder.userId)
@@ -153,6 +195,7 @@ class ExposedReminderRepository(
                         it.setObject(8, delivery.telegramMessageId)
                         it.setString(9, delivery.error)
                         it.setObject(10, now.toUtc())
+                        it.setObject(11, delivery.id)
                         it.executeUpdate()
                     }
             }

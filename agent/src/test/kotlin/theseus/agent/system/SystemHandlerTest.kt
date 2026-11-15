@@ -29,20 +29,49 @@ class SystemHandlerTest {
     private val operations = OutgoingOperations(store, core)
     private val onboarding = Onboarding(store, operations, texts, clock, zones)
 
-    private fun handler(deletion: Boolean = false) =
-        SystemHandler(
-            core,
-            store,
-            operations,
-            onboarding,
-            AdminCommands(core, operations, texts),
-            1,
-            "test_bot",
-            texts,
-            if (deletion) HardDelete(core, store, operations, ChatLocks(), texts) else null,
-        )
+    private fun handler(
+        deletion: Boolean = false,
+        dialogs: theseus.agent.dialog.DialogStore? = null,
+    ) = SystemHandler(
+        core,
+        store,
+        operations,
+        onboarding,
+        AdminCommands(core, operations, texts),
+        1,
+        "test_bot",
+        texts,
+        if (deletion) HardDelete(core, store, operations, ChatLocks(), texts) else null,
+        dialogs = dialogs,
+        clock = clock,
+    )
 
     private val active = CoreUser(7, 7, "active", "Аня", "female", "Europe/Moscow")
+
+    @Test fun `button result enters history once and replay never calls core again`() =
+        runTest {
+            val dialogs = theseus.agent.pipeline.FakeDialogs()
+            core.user = active
+            core.response =
+                RestReply(
+                    200,
+                    Json
+                        .parseToJsonElement(
+                            """{"snoozed_until_local":"2026-11-12T14:15","timezone":"Europe/Moscow"}""",
+                        ).jsonObject,
+                )
+            val input = Incoming("snooze-history", 7, callback = "snz:42:15m")
+            val first = handler(dialogs = dialogs).handle(input)!!
+            assertEquals(first, handler(dialogs = dialogs).handle(input))
+            assertEquals(1, core.requests.size)
+            assertEquals(2, dialogs.session.entries.size)
+            assertEquals(
+                first.text,
+                dialogs.session.entries
+                    .last()
+                    .content,
+            )
+        }
 
     @Test
     fun `hard delete disabled on prod and non owner cannot delete during onboarding`() =

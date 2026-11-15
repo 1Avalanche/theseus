@@ -19,14 +19,31 @@ class TelegramNotifierTest {
         private val code: Int,
     ) : TelegramBot {
         var calls = 0
+        var keyboard: dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup? = null
 
         override suspend fun <T : Any> execute(request: Request<T>): T {
             calls++
+            keyboard =
+                (request as? dev.inmo.tgbotapi.requests.send.SendTextMessage)?.replyMarkup as?
+                    dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup
             throw ApiException(code, "private text")
         }
 
         override fun close() = Unit
     }
+
+    @Test fun `notification carries reserved delivery id in all snooze buttons`() =
+        runTest {
+            val bot = FailingBot(403)
+            TelegramNotifier(bot).send(1, "Вода", 42)
+            val wire =
+                kotlinx.serialization.json.Json.encodeToString(
+                    dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup
+                        .serializer(),
+                    requireNotNull(bot.keyboard),
+                )
+            listOf("snz:42:15m", "snz:42:1h", "snz:42:tmr").forEach { assertTrue(wire.contains(it)) }
+        }
 
     @Test
     fun `temporary failure waits before another network attempt`() =
