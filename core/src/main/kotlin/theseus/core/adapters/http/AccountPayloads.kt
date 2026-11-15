@@ -2,21 +2,12 @@ package theseus.core.adapters.http
 
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.routing.get
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import theseus.core.domain.user.AccountException
 import theseus.core.domain.user.Gender
-
-internal fun canonical(value: JsonElement): String =
-    when (value) {
-        is JsonObject -> value.toSortedMap().entries.joinToString(",", "{", "}") { "${JsonPrimitive(it.key)}:${canonical(it.value)}" }
-        is JsonArray -> value.joinToString(",", "[", "]", transform = ::canonical)
-        else -> value.toString()
-    }
 
 internal fun JsonObject.string(key: String): String =
     (get(key) as? JsonPrimitive)?.takeIf { it.isString }?.content

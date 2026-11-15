@@ -1,0 +1,54 @@
+{
+  "type": "object",
+  "properties": {
+    "reminder_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "when": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string"
+        },
+        "time": {
+          "type": "string"
+        },
+        "part_of_day": {
+          "type": "string",
+          "enum": [
+            "morning",
+            "day",
+            "evening"
+          ]
+        },
+        "after": {
+          "type": "object",
+          "properties": {
+            "days": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "hours": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minutes": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "reminder_id",
+    "when"
+  ],
+  "additionalProperties": false
+}

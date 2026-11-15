@@ -22,6 +22,7 @@ import theseus.core.adapters.mcp.McpServerFactory
 import theseus.core.adapters.mcp.ReminderTools
 import theseus.core.application.AccountsRepository
 import theseus.core.application.AccountsService
+import theseus.core.application.InMemoryOperations
 import theseus.core.application.InMemoryReminderRepository
 import theseus.core.application.InMemoryUserRepository
 import theseus.core.application.MutableClock
@@ -53,7 +54,7 @@ class HttpModuleTest {
                     serviceToken = token,
                     health = { healthy },
                     users = users,
-                    mcpServer = McpServerFactory.create(ReminderTools(service, Texts.load("texts/core.properties"))),
+                    mcpServer = McpServerFactory.create(ReminderTools(service, Texts.load("texts/core.properties"), InMemoryOperations())),
                     accounts =
                         AccountsRoutes(
                             AccountsService(
@@ -137,13 +138,13 @@ class HttpModuleTest {
             val mcp = http.mcpStreamableHttp("/mcp") { headers.append(HttpHeaders.Authorization, "Bearer $token") }
 
             val tools = mcp.listTools().tools
-            assertEquals(listOf("create_reminder"), tools.map { it.name })
+            assertEquals(ReminderTools.names, tools.map { it.name })
 
             val result =
                 mcp.callTool(
                     name = "create_reminder",
                     arguments = mapOf("text" to "Выключить духовку", "when" to mapOf("after" to mapOf("minutes" to 5))),
-                    meta = mapOf(McpServerFactory.USER_META_KEY to 7),
+                    meta = mapOf(McpServerFactory.USER_META_KEY to 7, McpServerFactory.OPERATION_META_KEY to UUID.randomUUID().toString()),
                 )
             val text = (result.content.single() as TextContent).text
 

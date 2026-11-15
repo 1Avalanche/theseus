@@ -30,10 +30,16 @@ data class CoreConfig(
     val lateThreshold: Duration,
     val inviteTtl: Duration = Duration.ofHours(DEFAULT_INVITE_TTL_HOURS),
     val stand: String = "prod",
+    val dayTimes: theseus.core.domain.reminder.DayTimes =
+        theseus.core.domain.reminder
+            .DayTimes(),
+    val duplicateTextThreshold: Double = 0.6,
+    val duplicateWindow: Duration = Duration.ofMinutes(DEFAULT_DUPLICATE_WINDOW_MINUTES),
 ) {
     override fun toString(): String = "CoreConfig(httpPort=$httpPort, db=${database.url}, admin=${admin.chatId})"
 
     companion object {
+        const val DEFAULT_DUPLICATE_WINDOW_MINUTES = 60L
         const val MIN_TOKEN_LENGTH = 32
         const val DEFAULT_INVITE_TTL_HOURS = 72L
 
@@ -64,6 +70,14 @@ data class CoreConfig(
                     lateThreshold = Duration.ofMinutes(reader.int("THESEUS_LATE_THRESHOLD_MINUTES", 5, 1..1440).toLong()),
                     inviteTtl = Duration.ofHours(reader.int("THESEUS_INVITE_TTL_HOURS", 72, 1..720).toLong()),
                     stand = env["THESEUS_STAND"] ?: "prod",
+                    dayTimes =
+                        theseus.core.domain.reminder.DayTimes(
+                            reader.time("THESEUS_MORNING_TIME", LocalTime.of(9, 0)),
+                            reader.time("THESEUS_DAY_TIME", LocalTime.of(14, 0)),
+                            reader.time("THESEUS_EVENING_TIME", LocalTime.of(19, 0)),
+                        ),
+                    duplicateTextThreshold = reader.fraction("THESEUS_DUPLICATE_TEXT_THRESHOLD", 0.6),
+                    duplicateWindow = Duration.ofMinutes(reader.int("THESEUS_DUPLICATE_WINDOW_MINUTES", 60, 0..1440).toLong()),
                 )
             reader.throwIfErrors()
             if (config.stand !in setOf("test", "prod")) throw ConfigException("THESEUS_STAND: ожидается test | prod")
@@ -116,6 +130,16 @@ private class EnvReader(
         val raw = required(name)
         if (raw.isEmpty()) return 0
         return raw.toLongOrNull() ?: 0L.also { errors += "$name: ожидается целое число" }
+    }
+
+    fun fraction(
+        name: String,
+        default: Double,
+    ): Double {
+        val raw = env[name]?.trim()
+        if (raw.isNullOrEmpty()) return default
+        return raw.toDoubleOrNull()?.takeIf { it.isFinite() && it in 0.0..1.0 }
+            ?: default.also { errors += "$name: ожидается число от 0 до 1" }
     }
 
     fun zone(name: String): ZoneId {

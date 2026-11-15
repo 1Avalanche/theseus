@@ -18,6 +18,7 @@ data class OperationRequest(
     val operation: String,
     val requestHash: String,
     val userId: Long?,
+    val channel: String = "REST",
 )
 
 /** Реализация удерживает транзакцию от авторизации до сохранения результата, включая вложенные репозитории. */

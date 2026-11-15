@@ -21,6 +21,8 @@ object LocalFormats {
 
     fun parseTime(value: String): LocalTime? = parseOrNull { LocalTime.parse(value, time) }
 
+    fun parseMoment(value: String): LocalDateTime? = parseOrNull { LocalDateTime.parse(value, moment) }
+
     fun formatDate(value: LocalDate): String = value.format(date)
 
     fun formatTime(value: LocalTime): String = value.format(time)

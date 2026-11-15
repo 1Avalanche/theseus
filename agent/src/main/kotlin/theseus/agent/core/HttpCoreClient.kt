@@ -84,6 +84,22 @@ class HttpCoreClient(
         userId: Long,
         name: String,
         arguments: JsonObject,
+    ): ToolResult = invokeTool(userId, name, arguments, null, null)
+
+    override suspend fun callTool(
+        userId: Long,
+        name: String,
+        arguments: JsonObject,
+        operationId: UUID,
+        confirmation: JsonObject?,
+    ): ToolResult = invokeTool(userId, name, arguments, operationId, confirmation)
+
+    private suspend fun invokeTool(
+        userId: Long,
+        name: String,
+        arguments: JsonObject,
+        operationId: UUID?,
+        confirmation: JsonObject?,
     ): ToolResult =
         withMcp { client ->
             val request =
@@ -91,7 +107,14 @@ class HttpCoreClient(
                     CallToolRequestParams(
                         name = name,
                         arguments = arguments,
-                        meta = RequestMeta(JsonObject(mapOf(USER_META_KEY to JsonPrimitive(userId)))),
+                        meta =
+                            RequestMeta(
+                                kotlinx.serialization.json.buildJsonObject {
+                                    put(USER_META_KEY, JsonPrimitive(userId))
+                                    operationId?.let { put("theseus/operation_id", JsonPrimitive(it.toString())) }
+                                    confirmation?.let { put("theseus/confirmation", it) }
+                                },
+                            ),
                     ),
                 )
             val result = client.callTool(request)

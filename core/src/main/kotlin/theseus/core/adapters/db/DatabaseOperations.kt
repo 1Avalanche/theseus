@@ -50,7 +50,7 @@ class DatabaseOperations(
                                 null
                             } else {
                                 val identity = listOf(row.getString(1), row.getString(2), row.getString(3), row.getString(4))
-                                if (identity != listOf(request.subject, "REST", request.operation, request.requestHash)) {
+                                if (identity != listOf(request.subject, request.channel, request.operation, request.requestHash)) {
                                     throw AccountException("idempotency_conflict")
                                 }
                                 val value = Json.parseToJsonElement(row.getString(5)).jsonObject
@@ -67,15 +67,16 @@ class DatabaseOperations(
                 jdbc
                     .prepareStatement(
                         """insert into operation_results(id,user_id,subject,channel,operation,request_hash,result,created_at)
-                values (?,?,?,'REST',?,?,?::jsonb,?)""",
+                values (?,?,?,?,?,?,?::jsonb,?)""",
                     ).use {
                         it.setObject(1, request.id)
                         it.setObject(2, request.userId)
                         it.setString(3, request.subject)
-                        it.setString(4, request.operation)
-                        it.setString(5, request.requestHash)
-                        it.setString(6, result)
-                        it.setObject(7, now.toUtc())
+                        it.setString(4, request.channel)
+                        it.setString(5, request.operation)
+                        it.setString(6, request.requestHash)
+                        it.setString(7, result)
+                        it.setObject(8, now.toUtc())
                         it.executeUpdate()
                     }
             }

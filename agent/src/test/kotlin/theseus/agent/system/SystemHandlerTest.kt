@@ -71,6 +71,14 @@ class SystemHandlerTest {
             userId: Long,
             name: String,
             arguments: JsonObject,
+            operationId: UUID,
+            confirmation: JsonObject?,
+        ): ToolResult = error("Системные события не используют MCP")
+
+        override suspend fun callTool(
+            userId: Long,
+            name: String,
+            arguments: JsonObject,
         ): ToolResult = error("Системные события не используют MCP")
 
         override suspend fun request(

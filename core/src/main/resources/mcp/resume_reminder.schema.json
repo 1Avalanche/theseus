@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "properties": {
+    "reminder_id": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "reminder_id"
+  ],
+  "additionalProperties": false
+}

@@ -63,6 +63,7 @@ class CoreMonitorTest {
     fun `database failure leaves pulse unset and publishes database failure`() =
         runTest {
             val repository = mockk<ReminderRepository>()
+            coEvery { repository.findResumable(any()) } returns emptyList()
             coEvery { repository.findDue(any(), any()) } throws IllegalStateException("private text")
             coEvery { repository.deliveryBacklog(any()) } throws IllegalStateException("private text")
             val scheduler = scheduler(repository)

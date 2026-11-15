@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "reminder_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "resume_on": {
+      "type": "string"
+    },
+    "resume_after": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "reminder_id"
+  ],
+  "additionalProperties": false
+}

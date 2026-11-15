@@ -65,6 +65,37 @@ class InMemoryReminderRepository : ReminderRepository {
     val reminders = mutableMapOf<Long, Reminder>()
     val deliveries = mutableListOf<Pair<Long, DeliveryRecord>>()
 
+    override suspend fun <T> withUserLock(
+        userId: Long,
+        block: suspend () -> T,
+    ): T = block()
+
+    override suspend fun find(
+        userId: Long,
+        id: Long,
+    ): Reminder? = reminders[id]?.takeIf { it.userId == userId }
+
+    override suspend fun list(userId: Long): List<Reminder> = reminders.values.filter { it.userId == userId }
+
+    override suspend fun save(
+        reminder: Reminder,
+        now: Instant,
+    ): Reminder = reminder.copy(updatedAt = now).also { reminders[it.id] = it }
+
+    override suspend fun record(
+        reminder: Reminder,
+        delivery: DeliveryRecord?,
+        now: Instant,
+    ) {
+        delivery?.let { deliveries += reminder.id to it }
+        save(reminder, now)
+    }
+
+    override suspend fun findResumable(now: Instant): List<Reminder> =
+        reminders.values.filter {
+            it.status == ReminderStatus.PAUSED && it.pausedUntil != null && it.pausedUntil <= now
+        }
+
     override suspend fun deliveryBacklog(now: Instant): DeliveryBacklog {
         val due = findDue(now, Int.MAX_VALUE)
         return DeliveryBacklog(due.size.toLong(), due.firstOrNull()?.nextFireAt)
@@ -81,11 +112,12 @@ class InMemoryReminderRepository : ReminderRepository {
                 text = reminder.text,
                 timezone = reminder.timezone,
                 startLocal = reminder.startLocal,
-                recurrenceRule = null,
+                recurrenceRule = reminder.recurrenceRule,
                 status = ReminderStatus.ACTIVE,
                 nextFireAt = reminder.nextFireAt,
                 lastFiredAt = null,
                 createdAt = now,
+                parentId = reminder.parentId,
             )
         reminders[created.id] = created
         return created
@@ -122,5 +154,27 @@ class FakeNotifier(
     ): NotifyResult {
         sent += chatId to text
         return result
+    }
+}
+
+class InMemoryOperations : Operations {
+    private val results = mutableMapOf<java.util.UUID, Pair<OperationRequest, OperationReply>>()
+
+    override suspend fun execute(
+        request: OperationRequest,
+        now: Instant,
+        authorize: suspend () -> Unit,
+        action: suspend () -> OperationReply,
+    ): OperationReply {
+        authorize()
+        val stored = results[request.id]
+        if (stored != null) {
+            if (stored.first != request) {
+                throw theseus.core.domain.user
+                    .AccountException("idempotency_conflict")
+            }
+            return stored.second
+        }
+        return action().also { results[request.id] = request to it }
     }
 }

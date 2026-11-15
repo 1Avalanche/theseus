@@ -62,6 +62,11 @@ class InMemoryAgentStore : AgentStore {
         operations[key] = operations.getValue(key).first to reply
     }
 
+    override suspend fun findOperation(id: UUID): Pair<Outgoing, RestReply?>? = operations.values.firstOrNull { it.first.id == id }
+
+    override suspend fun eventOperations(eventKey: String): List<Pair<Outgoing, RestReply?>> =
+        operations.values.filter { it.first.eventKey.startsWith("$eventKey:") }
+
     override suspend fun pendingOperations() = operations.values.filter { it.second == null }.map { it.first }
 
     override suspend fun eraseUser(

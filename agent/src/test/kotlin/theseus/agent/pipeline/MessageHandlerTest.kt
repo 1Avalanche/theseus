@@ -25,6 +25,39 @@ import java.time.Instant
 import java.time.ZoneOffset
 
 class MessageHandlerTest {
+    @Test
+    fun `find candidates reach model before updating selected reminder`() =
+        runTest {
+            val candidates = """{"candidates":[{"id":17,"text":"Позвонить маме","timezone":"Europe/Moscow"}]}"""
+            val updated = """{"status":"updated","reminder":{"id":17,"text":"Позвонить маме","kind":"one_time",
+            "status":"active","timezone":"Europe/Moscow","schedule":{"at_local":"2026-11-03T18:00"},
+            "next_at_local":"2026-11-03T18:00"},"warnings":[]}"""
+            val core = FakeCore(mapOf(owner.chatId to owner))
+            core.results += ToolResult(candidates, false)
+            core.results += ToolResult(updated, false)
+            val llm =
+                FakeLlm(
+                    ChatMessage(Role.ASSISTANT, null, toolCalls = listOf(ToolCall("find", "find_reminders", """{"query":"мама"}"""))),
+                    ChatMessage(
+                        Role.ASSISTANT,
+                        null,
+                        toolCalls =
+                            listOf(
+                                ToolCall(
+                                    "update",
+                                    "update_reminder",
+                                    """{"reminder_id":17,"when":{"date":"2026-11-03","time":"18:00"}}""",
+                                ),
+                            ),
+                    ),
+                )
+            val reply = handler(core, llm).handle(owner.chatId, "Перенеси звонок маме на завтра в шесть вечера")
+            assertEquals(listOf("find_reminders", "update_reminder"), core.calls.map { it.second })
+            assertEquals(2, llm.requests.size)
+            assertTrue(llm.requests[1].messages.any { it.role == Role.TOOL && it.content == candidates })
+            assertTrue(requireNotNull(reply).startsWith("Изменил:"))
+        }
+
     private val texts = Texts.load("texts/agent.properties")
     private val owner = CoreUser(id = 7, chatId = 4242, status = "active", name = "Аня", gender = "female", timezone = "Europe/Moscow")
     private val clock = Clock.fixed(Instant.parse("2026-11-02T07:15:00Z"), ZoneOffset.UTC)
@@ -43,6 +76,14 @@ class MessageHandlerTest {
         override suspend fun findUserByChat(chatId: Long) = users[chatId]
 
         override suspend fun listTools() = listOf(ToolSpec("create_reminder", "Создать напоминание", JsonObject(emptyMap())))
+
+        override suspend fun callTool(
+            userId: Long,
+            name: String,
+            arguments: JsonObject,
+            operationId: java.util.UUID,
+            confirmation: JsonObject?,
+        ): ToolResult = callTool(userId, name, arguments)
 
         override suspend fun callTool(
             userId: Long,

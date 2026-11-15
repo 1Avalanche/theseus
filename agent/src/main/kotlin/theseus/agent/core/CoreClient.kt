@@ -44,4 +44,13 @@ interface CoreClient {
         name: String,
         arguments: JsonObject,
     ): ToolResult
+
+    /** Изменяющий вызов использует долговечный ключ и условие подтверждения, назначенные кодом. */
+    suspend fun callTool(
+        userId: Long,
+        name: String,
+        arguments: JsonObject,
+        operationId: java.util.UUID,
+        confirmation: JsonObject? = null,
+    ): ToolResult
 }

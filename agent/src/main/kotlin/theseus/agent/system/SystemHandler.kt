@@ -20,6 +20,7 @@ class SystemHandler(
     private val botUsername: String,
     private val texts: Texts,
     private val hardDelete: HardDelete? = null,
+    private val reminderActions: theseus.agent.pipeline.ReminderActions? = null,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val dialogue = DialogReplies(texts)
@@ -57,7 +58,12 @@ class SystemHandler(
         if (snapshot.user != null && current?.id != snapshot.user.id) return BotReply(texts.get("access.revoked"))
         if (persisted.delivered) return BotReply("")
         persisted.reply?.let { return it }
-        val reply = process(snapshot)
+        val reply =
+            if (snapshot.dialogue && current?.isActive == true) {
+                reminderActions?.recoverDialogue(input.id, current) ?: process(snapshot)
+            } else {
+                process(snapshot)
+            }
         store.finishEvent(input.id, reply)
         return reply
     }
@@ -95,7 +101,7 @@ class SystemHandler(
                 } else {
                     BotReply(texts.get("admin.forbidden"))
                 }
-            input.callback != null -> BotReply(texts.get("onboarding.stale"))
+            input.callback != null -> reminderActions?.callback(input, user) ?: BotReply(texts.get("onboarding.stale"))
             else -> commandReply(input, user, command)
         }
     }

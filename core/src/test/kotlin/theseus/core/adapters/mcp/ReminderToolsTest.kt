@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import theseus.core.application.InMemoryOperations
 import theseus.core.application.InMemoryReminderRepository
 import theseus.core.application.InMemoryUserRepository
 import theseus.core.application.MutableClock
@@ -31,9 +32,34 @@ class ReminderToolsTest {
                 clock,
             ),
             Texts.load("texts/core.properties"),
+            InMemoryOperations(),
         )
 
     private fun args(json: String) = Json.parseToJsonElement(json).jsonObject
+
+    @Test
+    fun `rejects unknown null recurrence field before merging patch`() =
+        runTest {
+            tools.createReminder(1, args("""{"text":"X","recurrence":{"freq":"daily"}}"""))
+            val result =
+                tools.call(
+                    "update_reminder",
+                    1,
+                    args("""{"reminder_id":1,"scope":"series","recurrence":{"unknown_field":null}}"""),
+                    java.util.UUID
+                        .randomUUID()
+                        .toString(),
+                )
+            assertEquals("invalid_arguments", errorCode(result))
+        }
+
+    @Test
+    fun `mutating MCP requires operation key while reads do not`() =
+        runTest {
+            val result = tools.call("create_reminder", 1, args("""{"text":"X","when":{"after":{"minutes":5}}}"""), null)
+            assertEquals("invalid_arguments", errorCode(result))
+            assertFalse(tools.call("list_reminders", 1, args("{}"), null).isError)
+        }
 
     private fun errorCode(outcome: ToolOutcome): String {
         assertTrue(outcome.isError, outcome.json)
@@ -52,7 +78,7 @@ class ReminderToolsTest {
             assertFalse(outcome.isError, outcome.json)
             assertEquals(
                 """{"status":"created","reminder":{"id":1,"text":"Выключить духовку","kind":"one_time","status":"active",""" +
-                    """"schedule":{"at_local":"2026-11-02T10:20"},"next_at_local":"2026-11-02T10:20",""" +
+                    """"timezone":"Europe/Moscow","schedule":{"at_local":"2026-11-02T10:20"},"next_at_local":"2026-11-02T10:20",""" +
                     """"paused_until_local":null,"snoozed_until_local":null},"warnings":[]}""",
                 outcome.json,
             )
@@ -86,11 +112,12 @@ class ReminderToolsTest {
         }
 
     @Test
-    fun `recurrence is not supported yet`() =
+    fun `creates recurring reminder`() =
         runTest {
             val outcome = tools.createReminder(1, args("""{"text":"X","recurrence":{"freq":"daily"}}"""))
 
-            assertEquals("invalid_recurrence", errorCode(outcome))
+            assertFalse(outcome.isError, outcome.json)
+            assertTrue(outcome.json.contains(""""kind":"recurring""""))
         }
 
     @Test
@@ -123,7 +150,7 @@ class ReminderToolsTest {
     fun `tool schema and description load from resources`() {
         val tool = McpServerFactory.loadTool("create_reminder")
 
-        assertEquals(listOf("text", "when"), tool.inputSchema.required)
+        assertEquals(listOf("text"), tool.inputSchema.required)
         assertTrue(tool.description!!.startsWith("Создать напоминание"))
     }
 }

@@ -3,7 +3,6 @@ package theseus.core.adapters.db
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
 import org.jetbrains.exposed.v1.jdbc.selectAll
@@ -145,14 +144,32 @@ class ExposedUserRepository(
     override suspend fun skipDue(
         userId: Long,
         now: Instant,
-    ) = db.tx {
-        RemindersTable.update({
-            (RemindersTable.userId eq userId) and (RemindersTable.status eq "ACTIVE") and
-                (RemindersTable.nextFireAt lessEq now.toUtc())
-        }) {
-            it[status] = "DONE"
-            it[nextFireAt] = null
-            it[updatedAt] = now.toUtc()
+    ) = db.atomic {
+        val reminders = ExposedReminderRepository(this@ExposedUserRepository.db)
+        val schedule =
+            theseus.core.domain.reminder
+                .ReminderSchedule()
+        for (reminder in reminders.list(userId)) {
+            if (reminder.status != theseus.core.domain.reminder.ReminderStatus.ACTIVE) continue
+            val next =
+                if (reminder.recurrenceRule == null) {
+                    reminder.nextFireAt?.takeIf { it > now }
+                } else {
+                    schedule.nextPlanned(reminder, now)
+                }
+            reminders.save(
+                reminder.copy(
+                    status =
+                        if (next == null) {
+                            theseus.core.domain.reminder.ReminderStatus.DONE
+                        } else {
+                            theseus.core.domain.reminder.ReminderStatus.ACTIVE
+                        },
+                    nextFireAt = next,
+                    snoozedUntil = null,
+                ),
+                now,
+            )
         }
         Unit
     }
