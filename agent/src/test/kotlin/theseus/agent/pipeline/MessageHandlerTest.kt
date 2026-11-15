@@ -2,6 +2,7 @@ package theseus.agent.pipeline
 
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -118,6 +119,7 @@ class MessageHandlerTest {
     ) : CoreClient {
         val calls = mutableListOf<Triple<Long, String, JsonObject>>()
         val results = ArrayDeque<ToolResult>()
+        var delayMs = 0L
 
         override suspend fun findUserByChat(chatId: Long) = users[chatId]
 
@@ -137,6 +139,7 @@ class MessageHandlerTest {
             arguments: JsonObject,
         ): ToolResult {
             calls += Triple(userId, name, arguments)
+            kotlinx.coroutines.delay(delayMs)
             return results.removeFirstOrNull() ?: result
         }
     }
@@ -161,7 +164,246 @@ class MessageHandlerTest {
     private fun handler(
         core: FakeCore,
         llm: FakeLlm,
-    ) = MessageHandler(core, llm, PromptBuilder(listOf("Персона"), "Сейчас {now_local}", texts), ReplyRenderer(texts), texts, clock)
+        dialogs: theseus.agent.dialog.DialogStore? = null,
+        systemCore: theseus.agent.system.SystemCore? = null,
+    ) = MessageHandler(
+        core,
+        llm,
+        PromptBuilder(listOf("Персона"), "Сейчас {now_local}", texts),
+        ReplyRenderer(texts),
+        texts,
+        clock,
+        dialogs = dialogs,
+        systemCore = systemCore,
+    )
+
+    @Test fun `short clarification keeps original request and rendered answer in next turn`() =
+        runTest {
+            val dialogs = FakeDialogs()
+            val core = FakeCore(mapOf(owner.chatId to owner), ToolResult(createdJson, false))
+            val llm =
+                FakeLlm(
+                    ChatMessage(Role.ASSISTANT, null, listOf(ToolCall("ask", "assistant_reply", """{"topic":"missing_time"}"""))),
+                    toolCall("""{"text":"Выключить духовку","when":{"after":{"minutes":5}}}"""),
+                )
+            val handler = handler(core, llm, dialogs)
+            handler.handle(owner.chatId, "Напомни выключить духовку", "first")
+            handler.handle(owner.chatId, "Через 5 минут", "second")
+            val messages = llm.requests.last().messages
+            assertTrue(messages.any { it.role == Role.USER && it.content == "Напомни выключить духовку" })
+            assertTrue(messages.any { it.role == Role.ASSISTANT && it.content == texts.get("reply.missing_time") })
+            assertEquals(1, core.calls.size)
+        }
+
+    @Test fun `reply metadata comes from authenticated system lookup and reaches model`() =
+        runTest {
+            val llm = FakeLlm(ChatMessage(Role.ASSISTANT, null, listOf(ToolCall("ask", "assistant_reply", """{"topic":"missing_time"}"""))))
+            val system =
+                theseus.agent.system.SystemCore { method, path, body, key ->
+                    assertEquals("GET", method)
+                    assertEquals("/deliveries/by-message?user_id=7&message_id=123", path)
+                    assertNull(body)
+                    assertNull(key)
+                    theseus.agent.system.RestReply(
+                        200,
+                        kotlinx.serialization.json.Json
+                            .parseToJsonElement(
+                                """{"reminder_id":42,"occurrence_local":"2026-11-16T09:00"}""",
+                            ).jsonObject,
+                    )
+                }
+            handler(
+                FakeCore(mapOf(owner.chatId to owner)),
+                llm,
+                systemCore = system,
+            ).handleReply(owner.chatId, "Перенеси на вечер", "reply", 123)
+            assertTrue(
+                llm.requests
+                    .single()
+                    .messages
+                    .any { it.content?.contains("\"reminder_id\":42") == true },
+            )
+        }
+
+    @Test fun `oversized tool batch changes nothing and returns budget reply`() =
+        runTest {
+            val core = FakeCore(mapOf(owner.chatId to owner))
+            val llm = FakeLlm(ChatMessage(Role.ASSISTANT, null, (1..7).map { ToolCall("$it", "create_reminder", "{\"text\":\"$it\"}") }))
+            assertEquals(texts.get("reply.budget"), handler(core, llm).handle(owner.chatId, "Семь напоминаний"))
+            assertTrue(core.calls.isEmpty())
+        }
+
+    @Test fun `slow generation ends after ninety seconds without mutation claim`() =
+        runTest {
+            val core = FakeCore(mapOf(owner.chatId to owner))
+            val slow =
+                object : LlmClient {
+                    override suspend fun complete(request: LlmRequest): LlmResponse {
+                        kotlinx.coroutines.delay(90_001)
+                        error("Не должен завершиться")
+                    }
+                }
+            val handler = MessageHandler(core, slow, PromptBuilder.fromResources(texts), ReplyRenderer(texts), texts, clock)
+            assertEquals(texts.get("reply.budget"), handler.handle(owner.chatId, "Привет"))
+            assertTrue(core.calls.isEmpty())
+        }
+
+    @Test fun `timed out mutation keeps outcome uncertain instead of declaring failure`() =
+        runTest {
+            val core = FakeCore(mapOf(owner.chatId to owner)).apply { delayMs = 90_001 }
+            val llm = FakeLlm(toolCall("""{"text":"Вода","when":{"after":{"minutes":1}}}"""))
+            org.junit.jupiter.api.assertThrows<theseus.agent.system.UncertainMcpException> {
+                handler(core, llm).handle(owner.chatId, "Напомни воду")
+            }
+            assertEquals(1, core.calls.size)
+            assertEquals(1, llm.requests.size)
+        }
+
+    @Test fun `resolved list number reaches model before target mutation`() =
+        runTest {
+            val dialogs = FakeDialogs().apply { session = session.copy(references = listOf(theseus.agent.dialog.ListReference(42))) }
+            val core = FakeCore(mapOf(owner.chatId to owner), ToolResult(createdJson.replace("created", "updated"), false))
+            val llm =
+                FakeLlm(
+                    ChatMessage(Role.ASSISTANT, null, listOf(ToolCall("resolve", "resolve_reference", "{\"number\":1}"))),
+                    ChatMessage(
+                        Role.ASSISTANT,
+                        null,
+                        listOf(ToolCall("update", "update_reminder", """{"reminder_id":42,"when":{"time":"18:00"}}""")),
+                    ),
+                )
+            val response = handler(core, llm, dialogs).handle(owner.chatId, "Перенеси первый на 18:00")
+            assertTrue(response!!.startsWith("Изменил:"))
+            assertEquals("update_reminder", core.calls.single().second)
+            assertTrue(
+                llm.requests
+                    .last()
+                    .messages
+                    .any { it.role == Role.TOOL && it.content == "{\"reminder_id\":42}" },
+            )
+        }
+
+    @Test fun `new tool result evicts old history without breaking current call result pair`() =
+        runTest {
+            val oldText = "А".repeat(4000)
+            val dialogs =
+                FakeDialogs().apply {
+                    session =
+                        session.copy(
+                            entries =
+                                listOf(
+                                    theseus.agent.dialog.DialogEntry(1, Role.USER, oldText),
+                                    theseus.agent.dialog.DialogEntry(2, Role.ASSISTANT, "Старый ответ"),
+                                ),
+                        )
+                }
+            val candidates =
+                kotlinx.serialization.json
+                    .buildJsonObject {
+                        put(
+                            "candidates",
+                            kotlinx.serialization.json.JsonArray(
+                                (1..5).map { id ->
+                                    kotlinx.serialization.json.buildJsonObject {
+                                        put("id", kotlinx.serialization.json.JsonPrimitive(id))
+                                        put("text", kotlinx.serialization.json.JsonPrimitive("Б".repeat(800)))
+                                    }
+                                },
+                            ),
+                        )
+                    }.toString()
+            val core =
+                FakeCore(mapOf(owner.chatId to owner)).apply {
+                    results += ToolResult(candidates, false)
+                    results += ToolResult(createdJson.replace("created", "updated"), false)
+                }
+            val llm =
+                FakeLlm(
+                    ChatMessage(Role.ASSISTANT, null, listOf(ToolCall("find", "find_reminders", "{\"query\":\"вода\"}"))),
+                    ChatMessage(
+                        Role.ASSISTANT,
+                        null,
+                        listOf(ToolCall("update", "update_reminder", """{"reminder_id":1,"when":{"time":"18:00"}}""")),
+                    ),
+                )
+            assertTrue(handler(core, llm, dialogs).handle(owner.chatId, "Перенеси воду на 18:00")!!.startsWith("Изменил:"))
+            val next = llm.requests.last().messages
+            assertTrue(next.none { it.content == oldText })
+            assertEquals(listOf(Role.SYSTEM, Role.USER, Role.ASSISTANT, Role.TOOL), next.map { it.role })
+            assertEquals("find", next.last().toolCallId)
+        }
+
+    @Test fun `summary generation failure still permits main request but usage failure blocks mutation`() =
+        runTest {
+            for (usageFailure in listOf(false, true)) {
+                val dialogs =
+                    FakeDialogs().apply {
+                        session =
+                            session.copy(
+                                entries =
+                                    (1..22).map {
+                                        theseus.agent.dialog.DialogEntry(
+                                            it.toLong(),
+                                            if (it % 2 ==
+                                                1
+                                            ) {
+                                                Role.USER
+                                            } else {
+                                                Role.ASSISTANT
+                                            },
+                                            "Предыдущая реплика $it",
+                                        )
+                                    },
+                            )
+                    }
+                val core = FakeCore(mapOf(owner.chatId to owner), ToolResult(createdJson, false))
+                val requests = mutableListOf<String>()
+                val llm =
+                    object : LlmClient {
+                        override suspend fun complete(request: LlmRequest): LlmResponse {
+                            requests += request.role
+                            if (request.role == "summary") {
+                                if (!usageFailure) throw LlmException("Summary provider unavailable")
+                                return LlmResponse(ChatMessage(Role.ASSISTANT, "Сводка"), "test/summary", null)
+                            }
+                            return LlmResponse(toolCall("""{"text":"Духовка","when":{"after":{"minutes":5}}}"""), "test/main", null)
+                        }
+                    }
+                val usage =
+                    object : theseus.agent.system.UsageRecorder {
+                        override suspend fun before(userId: Long) = Unit
+
+                        override suspend fun record(
+                            userId: Long,
+                            eventKey: String,
+                            response: LlmResponse,
+                        ) {
+                            if (usageFailure) throw LlmException("Usage unavailable")
+                        }
+                    }
+                val handler =
+                    MessageHandler(
+                        core,
+                        llm,
+                        PromptBuilder.fromResources(texts),
+                        ReplyRenderer(texts),
+                        texts,
+                        clock,
+                        dialogs = dialogs,
+                        usage = usage,
+                    )
+                val result = handler.handle(owner.chatId, "Напомни через 5 минут выключить духовку")
+                if (usageFailure) {
+                    assertEquals(texts.get("reply.failure"), result)
+                    assertTrue(core.calls.isEmpty())
+                    assertEquals(listOf("summary"), requests)
+                } else {
+                    assertTrue(result!!.startsWith("Поставил:"))
+                    assertEquals(1, core.calls.size)
+                    assertEquals(listOf("summary", "main"), requests)
+                }
+            }
+        }
 
     @Test
     fun `unknown chat is dropped before llm`() =
@@ -233,7 +475,7 @@ class MessageHandlerTest {
         }
 
     @Test
-    fun `who are you is answered by local dialogue template without core mutation`() =
+    fun `who are you uses separate generation by persona card without core mutation`() =
         runTest {
             val core = FakeCore(mapOf(4242L to owner))
             val llm =
@@ -243,11 +485,34 @@ class MessageHandlerTest {
                         null,
                         toolCalls = listOf(ToolCall("dialogue_1", "assistant_reply", """{"topic":"about"}""")),
                     ),
+                    ChatMessage(Role.ASSISTANT, "Я синтет. Перевожу сложные системы на понятный язык."),
                 )
 
-            assertEquals(texts.get("reply.about"), handler(core, llm).handle(4242, "кто ты"))
+            assertEquals("Я синтет. Перевожу сложные системы на понятный язык.", handler(core, llm).handle(4242, "кто ты"))
             assertTrue(core.calls.isEmpty())
-            assertEquals(1, llm.requests.size)
+            assertEquals(2, llm.requests.size)
+            assertTrue(
+                llm.requests
+                    .last()
+                    .tools
+                    .isEmpty(),
+            )
+            assertTrue(
+                llm.requests
+                    .last()
+                    .messages
+                    .first()
+                    .content!!
+                    .contains("половину мозга"),
+            )
+            assertEquals(
+                "кто ты",
+                llm.requests
+                    .last()
+                    .messages
+                    .last()
+                    .content,
+            )
         }
 
     @Test
@@ -334,7 +599,7 @@ class MessageHandlerTest {
                         toolCalls =
                             listOf(
                                 ToolCall("call_1", "create_reminder", "{}"),
-                                ToolCall("call_2", "create_reminder", "{}"),
+                                ToolCall("call_2", "create_reminder", "{\"text\":\"Другое напоминание\"}"),
                             ),
                     ),
                 )
@@ -382,8 +647,9 @@ class MessageHandlerTest {
             val call = toolCall("""{"text":"X","when":{"time":"09:00"}}""")
             val llm = FakeLlm(call, call, call, call)
 
-            assertEquals(texts.get("reply.failure"), handler(core, llm).handle(4242, "X"))
-            assertEquals(MessageHandler.DEFAULT_MAX_TOOL_ROUNDS + 1, llm.requests.size)
+            assertEquals(texts.get("reply.budget"), handler(core, llm).handle(4242, "X"))
+            assertEquals(2, llm.requests.size)
+            assertEquals(1, core.calls.size)
         }
 
     @Test

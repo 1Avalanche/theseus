@@ -58,6 +58,57 @@ import java.util.UUID
 @Testcontainers(disabledWithoutDocker = true)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ReminderDomainIntegrationTest {
+    @Test fun `reserved delivery id reaches keyboard and is scoped for reply lookup`() =
+        runTest {
+            val user = activeUser()
+            val other = activeUser(200)
+            val reminder =
+                service.createOneTime(
+                    user.id,
+                    "Доставка",
+                    When(
+                        after =
+                            theseus.core.domain.reminder
+                                .After(minutes = 1),
+                    ),
+                )
+            clock.now = clock.instant().plusSeconds(120)
+            var keyboardId: Long? = null
+            val notifier =
+                object : Notifier {
+                    override suspend fun send(
+                        chatId: Long,
+                        text: String,
+                    ): NotifyResult = error("Нужен id доставки")
+
+                    override suspend fun send(
+                        chatId: Long,
+                        text: String,
+                        deliveryId: Long,
+                    ): NotifyResult {
+                        keyboardId = deliveryId
+                        return NotifyResult.Sent(12345)
+                    }
+                }
+            val scheduler = ReminderScheduler(reminders, users, notifier, texts, clock, Duration.ofMinutes(5))
+            assertEquals(1, scheduler.tick())
+            val found = reminders.delivery(user.id, messageId = 12345)!!
+            assertEquals(keyboardId, found.id)
+            assertEquals(reminder.id, found.reminderId)
+            assertEquals(null, reminders.delivery(other.id, id = found.id))
+            assertEquals(null, reminders.delivery(other.id, messageId = 12345))
+            val deliveryService = theseus.core.application.DeliveryService(reminders, service, clock)
+            val key = UUID.randomUUID()
+            val request = OperationRequest(key, "agent", "snooze-test", "hash", user.id)
+            val first =
+                operations.execute(request, clock.instant(), { service.authorize(user.id) }) {
+                    OperationReply(200, "{\"at\":\"${deliveryService.snooze(user.id, found.id, "15m").nextFireAt}\"}")
+                }
+            clock.now = clock.instant().plusSeconds(60)
+            val repeated = operations.execute(request, clock.instant(), { service.authorize(user.id) }) { error("Не исполнять повторно") }
+            assertEquals(first, repeated)
+        }
+
     @Test
     fun `confirmed delete all is atomic user scoped and replays original count after response loss`() =
         runTest {

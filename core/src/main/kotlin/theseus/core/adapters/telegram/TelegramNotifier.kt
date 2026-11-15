@@ -22,16 +22,47 @@ class TelegramNotifier(
     private val clock: Clock = Clock.systemUTC(),
     private val signal: DeliverySignal = DeliverySignal(clock),
 ) : Notifier {
+    private val texts =
+        theseus.core.texts.Texts
+            .load("texts/core.properties")
+
     override suspend fun send(
         chatId: Long,
         text: String,
+    ): NotifyResult = sendNotification(chatId, text, null)
+
+    override suspend fun send(
+        chatId: Long,
+        text: String,
+        deliveryId: Long,
+    ): NotifyResult = sendNotification(chatId, text, deliveryId)
+
+    private suspend fun sendNotification(
+        chatId: Long,
+        text: String,
+        deliveryId: Long?,
     ): NotifyResult {
         if (clock.instant().epochSecond < signal.retryAt) {
             return NotifyResult.Failed("telegram: ожидание повтора", permanent = false)
         }
         return try {
             val message =
-                withTimeoutOrNull(60_000) { bot.sendTextMessage(ChatId(RawChatId(chatId)), text) }
+                withTimeoutOrNull(60_000) {
+                    val keyboard =
+                        deliveryId?.let { id ->
+                            dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup(
+                                listOf(
+                                    listOf("15m", "1h", "tmr").map { option ->
+                                        dev.inmo.tgbotapi.types.buttons.InlineKeyboardButtons.CallbackDataInlineKeyboardButton(
+                                            texts.get("snooze.$option"),
+                                            "snz:$id:$option",
+                                        )
+                                    },
+                                ),
+                            )
+                        }
+                    bot.sendTextMessage(ChatId(RawChatId(chatId)), text, replyMarkup = keyboard)
+                }
                     ?: throw IOException("Истёк срок отправки Telegram")
             signal.success()
             NotifyResult.Sent(message.messageId.long)

@@ -21,6 +21,9 @@ class SystemHandler(
     private val texts: Texts,
     private val hardDelete: HardDelete? = null,
     private val reminderActions: theseus.agent.pipeline.ReminderActions? = null,
+    private val deliveryActions: DeliveryActions = DeliveryActions(operations, texts),
+    private val dialogs: theseus.agent.dialog.DialogStore? = null,
+    private val clock: java.time.Clock = java.time.Clock.systemUTC(),
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val dialogue = DialogReplies(texts)
@@ -64,8 +67,18 @@ class SystemHandler(
             } else {
                 process(snapshot)
             }
+        rememberRecovered(snapshot.dialogue, current, input.id, reply)
         store.finishEvent(input.id, reply)
         return reply
+    }
+
+    private suspend fun rememberRecovered(
+        dialogue: Boolean,
+        user: CoreUser?,
+        eventId: String,
+        reply: BotReply,
+    ) {
+        if (dialogue && user != null) dialogs?.completeEvent(user.id, eventId, reply.text, clock.instant())
     }
 
     /** До LLM сохраняется маркер начала, без самого текста: незавершённое изменение не исполняется заново. */
@@ -101,9 +114,28 @@ class SystemHandler(
                 } else {
                     BotReply(texts.get("admin.forbidden"))
                 }
-            input.callback != null -> reminderActions?.callback(input, user) ?: BotReply(texts.get("onboarding.stale"))
+            input.callback != null -> callback(input, user)
             else -> commandReply(input, user, command)
         }
+    }
+
+    private suspend fun callback(
+        input: Incoming,
+        user: CoreUser,
+    ): BotReply {
+        val reply =
+            if (input.callback?.startsWith("snz:") == true) {
+                deliveryActions.callback(input, user)
+            } else {
+                reminderActions?.callback(input, user) ?: BotReply(texts.get("onboarding.stale"))
+            }
+        dialogs?.let { memory ->
+            val now = clock.instant()
+            val session = memory.open(user.id, user.chatId, now)
+            memory.append(session.id, user.id, input.id, theseus.agent.llm.Role.USER, texts.get("context.button"), now)
+            memory.append(session.id, user.id, input.id, theseus.agent.llm.Role.ASSISTANT, reply.text, now)
+        }
+        return reply
     }
 
     private suspend fun deleteUser(

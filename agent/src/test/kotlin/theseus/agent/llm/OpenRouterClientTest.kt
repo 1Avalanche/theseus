@@ -22,6 +22,39 @@ import java.time.Clock
 import java.time.Duration
 
 class OpenRouterClientTest {
+    @Test fun `summary model output cap and effective window are enforced on wire`() =
+        runTest {
+            val sent = mutableListOf<String>()
+            val http =
+                HttpClient(
+                    MockEngine { request ->
+                        sent += (request.body as TextContent).text
+                        respond(
+                            """{"model":"summary/model","choices":[{"message":{"role":"assistant","content":"Сводка"}}]}""",
+                            HttpStatusCode.OK,
+                            headersOf(HttpHeaders.ContentType, "application/json"),
+                        )
+                    },
+                ) { install(HttpTimeout) }
+            val client =
+                OpenRouterClient(
+                    http,
+                    "https://test",
+                    "key",
+                    models,
+                    Duration.ofSeconds(30),
+                    summaryModels = listOf("summary/model"),
+                    contextTokens = 4000,
+                )
+            val result = client.complete(LlmRequest(listOf(ChatMessage(Role.USER, "История")), emptyList(), 1000, "summary"))
+            assertEquals("summary", result.role)
+            val wire = Json.parseToJsonElement(sent.single()).jsonObject
+            assertEquals("summary/model", wire.getValue("model").jsonPrimitive.content)
+            assertEquals("1000", wire.getValue("max_tokens").jsonPrimitive.content)
+            assertThrows<LlmBudgetException> { client.complete(request.copy(messages = listOf(ChatMessage(Role.USER, "x".repeat(2500))))) }
+            assertEquals(1, sent.size)
+        }
+
     private val signal = DependencySignal(Clock.systemUTC())
     private val models = listOf("anthropic/claude-haiku-5.5", "google/gemini-3.1-flash-lite")
 
@@ -67,6 +100,7 @@ class OpenRouterClientTest {
             val sent = Json.parseToJsonElement(captured.single()).jsonObject
             assertEquals(models, sent["models"]!!.jsonArray.map { it.jsonPrimitive.content })
             assertEquals("deny", sent["provider"]!!.jsonObject["data_collection"]!!.jsonPrimitive.content)
+            assertEquals("2000", sent["max_tokens"]!!.jsonPrimitive.content)
             assertEquals(
                 "create_reminder",
                 sent["tools"]!!

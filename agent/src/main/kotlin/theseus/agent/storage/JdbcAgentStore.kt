@@ -32,6 +32,8 @@ class JdbcAgentStore(
 ) : AgentStore,
     theseus.agent.system.UserErasureStore by JdbcUserErasure(pool, cipher),
     AutoCloseable by pool {
+    val dialogs: theseus.agent.dialog.DialogStore = JdbcDialogStore(pool, cipher)
+
     fun migrate() {
         Flyway
             .configure()

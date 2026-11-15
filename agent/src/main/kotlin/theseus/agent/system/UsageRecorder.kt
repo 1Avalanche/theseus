@@ -52,7 +52,7 @@ class PersistentUsageRecorder(
                 "/usage",
                 buildJsonObject {
                     put("user_id", userId)
-                    put("role", "main")
+                    put("role", response.role)
                     put("model", response.model)
                     response.generationId?.let { put("generation_id", it) }
                     put("tokens_in", usage.tokensIn)

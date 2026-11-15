@@ -27,7 +27,17 @@ data class ToolDefinition(
 data class LlmRequest(
     val messages: List<ChatMessage>,
     val tools: List<ToolDefinition>,
-)
+    val maxOutputTokens: Int = 2000,
+    val role: String = "main",
+) {
+    init {
+        require(maxOutputTokens in 1..MAX_OUTPUT_TOKENS)
+    }
+
+    companion object {
+        private const val MAX_OUTPUT_TOKENS = 2000
+    }
+}
 
 data class LlmUsage(
     val tokensIn: Int,
@@ -43,6 +53,7 @@ data class LlmResponse(
     val usage: LlmUsage?,
     val generationId: String? = null,
     val latencyMs: Int? = null,
+    val role: String = "main",
 )
 
 /** Порт к LLM. В юнит-тестах — только фейк с заготовленными ответами. */

@@ -7,6 +7,15 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 class AgentConfigTest {
+    @Test fun `summary defaults to main and context window validates`() {
+        val defaults = AgentConfig.fromEnv(valid)
+        assertEquals(defaults.mainModels, defaults.summaryModels)
+        assertEquals(18000, defaults.contextTokens)
+        assertEquals(listOf("summary/model"), AgentConfig.fromEnv(valid + ("THESEUS_LLM_SUMMARY_MODELS" to "summary/model")).summaryModels)
+        assertThrows<ConfigException> { AgentConfig.fromEnv(valid + ("THESEUS_LLM_CONTEXT_TOKENS" to "3999")) }
+        assertThrows<ConfigException> { AgentConfig.fromEnv(valid + ("THESEUS_LLM_SUMMARY_MODELS" to ",,")) }
+    }
+
     @Test
     fun `stand defaults to prod and rejects unknown values`() {
         assertEquals("prod", AgentConfig.fromEnv(valid).stand)

@@ -1,0 +1,1 @@
+{"type":"object","properties":{"number":{"type":"integer","minimum":1}},"required":["number"],"additionalProperties":false}

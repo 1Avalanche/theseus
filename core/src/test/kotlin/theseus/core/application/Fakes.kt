@@ -62,6 +62,30 @@ class InMemoryUserRepository(
 }
 
 class InMemoryReminderRepository : ReminderRepository {
+    private var deliverySequence = 0L
+
+    override suspend fun nextDeliveryId(): Long = ++deliverySequence
+
+    override suspend fun delivery(
+        userId: Long,
+        id: Long?,
+        messageId: Long?,
+    ): DeliveryReference? =
+        deliveries
+            .firstOrNull { (reminderId, record) ->
+                reminders[reminderId]?.userId == userId &&
+                    record.status == theseus.core.domain.reminder.DeliveryStatus.SENT &&
+                    (
+                        if (id !=
+                            null
+                        ) {
+                            record.id == id
+                        } else {
+                            record.telegramMessageId == messageId
+                        }
+                    )
+            }?.let { (reminderId, record) -> DeliveryReference(requireNotNull(record.id), reminderId, record.occurrenceAt) }
+
     val reminders = mutableMapOf<Long, Reminder>()
     val deliveries = mutableListOf<Pair<Long, DeliveryRecord>>()
 

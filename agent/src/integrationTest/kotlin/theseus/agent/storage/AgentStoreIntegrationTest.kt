@@ -33,6 +33,86 @@ import java.util.UUID
 @Testcontainers(disabledWithoutDocker = true)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AgentStoreIntegrationTest {
+    @Test fun `recovered outcome appends to original session once without opening a new session`() =
+        runTest {
+            store(pool()).use { journal ->
+                val dialogs = journal.dialogs
+                val session = dialogs.open(952, 9952, clock.instant())
+                dialogs.append(session.id, 952, "recovered-dialog", theseus.agent.llm.Role.USER, "Перенеси", clock.instant())
+                dialogs.completeEvent(952, "recovered-dialog", "Изменил", clock.instant().plusSeconds(1))
+                dialogs.completeEvent(952, "recovered-dialog", "Не должен заменить", clock.instant().plusSeconds(2))
+                val resumed = dialogs.open(952, 9952, clock.instant().plusSeconds(3))
+                assertEquals(listOf("Перенеси", "Изменил"), resumed.entries.map { it.content })
+                journal.eraseUser(952, 9952, emptyList())
+            }
+        }
+
+    @Test fun `history summary and reference survive restart expire independently and erase with user`() =
+        runTest {
+            val now = clock.instant()
+            var sessionId = 0L
+            store(pool()).use { journal ->
+                val dialogs = journal.dialogs
+                val session = dialogs.open(951, 9951, now)
+                sessionId = session.id
+                dialogs.append(session.id, 951, "dialog-first", theseus.agent.llm.Role.USER, "PRIVATE-HISTORY", now)
+                dialogs.append(session.id, 951, "dialog-first", theseus.agent.llm.Role.USER, "DUPLICATE", now)
+                val saved = dialogs.open(951, 9951, now.plusSeconds(1))
+                assertEquals(1, saved.entries.size)
+                dialogs.summarize(session.id, "PRIVATE-SUMMARY", saved.entries.single().id)
+                dialogs.references(session.id, listOf(theseus.agent.dialog.ListReference(42, "2026-11-13T09:00")))
+            }
+            val secondPool = pool()
+            store(secondPool).use { journal ->
+                val dialogs = journal.dialogs
+                val resumed = dialogs.open(951, 9951, now.plusSeconds(2))
+                assertEquals(sessionId, resumed.id)
+                assertEquals("PRIVATE-SUMMARY", resumed.summary)
+                assertTrue(resumed.entries.isEmpty())
+                assertEquals(42L, resumed.references.single().reminderId)
+                secondPool.connection.use { connection ->
+                    connection.createStatement().use { statement ->
+                        statement.executeQuery("select summary from dialog_sessions where user_id=951").use { row ->
+                            assertTrue(row.next())
+                            assertFalse(row.getString(1).contains("PRIVATE-SUMMARY"))
+                        }
+                        statement.executeQuery("select content from dialog_messages where user_id=951").use { row ->
+                            assertTrue(row.next())
+                            assertFalse(row.getString(1).contains("PRIVATE-HISTORY"))
+                        }
+                    }
+                }
+                val next = dialogs.open(951, 9951, now.plusSeconds(4 * 3600 + 2))
+                assertTrue(next.id != sessionId)
+                assertEquals(null, next.summary)
+                assertTrue(next.references.isEmpty())
+                dialogs.cleanup(now.plusSeconds(30L * 86400 + 3))
+                secondPool.connection.use { connection ->
+                    connection.createStatement().use { statement ->
+                        statement.executeQuery("select count(*) from dialog_messages where user_id=951").use { row ->
+                            assertTrue(row.next())
+                            assertEquals(0, row.getInt(1))
+                        }
+                        statement.executeQuery("select summary from dialog_sessions where id=$sessionId").use { row ->
+                            assertTrue(row.next())
+                            assertFalse(row.getString(1).isNullOrBlank())
+                        }
+                    }
+                }
+                dialogs.cleanup(now.plusSeconds(31L * 86400))
+                assertTrue(dialogs.open(951, 9951, now.plusSeconds(31L * 86400)).summary == null)
+                journal.eraseUser(951, 9951, emptyList())
+                secondPool.connection.use { connection ->
+                    connection.createStatement().use { statement ->
+                        statement.executeQuery("select count(*) from dialog_sessions where user_id=951").use { row ->
+                            assertTrue(row.next())
+                            assertEquals(0, row.getInt(1))
+                        }
+                    }
+                }
+            }
+        }
+
     @Test
     fun `confirmation metadata and fixed execution key survive restart and user erasure`() =
         runTest {

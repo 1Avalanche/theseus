@@ -24,6 +24,12 @@ class PromptBuilder(
     fun system(
         user: CoreUser,
         now: Instant,
+    ): String = "$stablePrefix\n\n${context(user, now)}"
+
+    /** Динамический блок профиля для каждой роли модели. */
+    fun context(
+        user: CoreUser,
+        now: Instant,
     ): String {
         val zone = ZoneId.of(requireNotNull(user.timezone))
         val local = ZonedDateTime.ofInstant(now, zone)
@@ -34,7 +40,7 @@ class PromptBuilder(
                 .replace("{now_local}", local.format(NOW_FORMAT))
                 .replace("{weekday}", local.dayOfWeek.getDisplayName(TextStyle.FULL, RU))
                 .replace("{timezone}", zone.id)
-        return "$stablePrefix\n\n$context"
+        return context
     }
 
     companion object {

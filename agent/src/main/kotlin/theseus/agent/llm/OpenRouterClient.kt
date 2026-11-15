@@ -33,8 +33,11 @@ class OpenRouterClient(
     private val timeout: Duration,
     private val signal: DependencySignal = DependencySignal(Clock.systemUTC()),
     private val clock: Clock = Clock.systemUTC(),
+    private val summaryModels: List<String> = models,
+    private val contextTokens: Int = 18000,
 ) : LlmClient {
     override suspend fun complete(request: LlmRequest): LlmResponse {
+        checkBudget(request)
         var failureCode = "network_or_response"
         val started = clock.instant()
         try {
@@ -52,7 +55,9 @@ class OpenRouterClient(
             checkStatus(response.status)
             return parse(
                 text,
+                if (request.role == "summary") summaryModels.first() else models.first(),
             ).copy(
+                role = request.role,
                 latencyMs =
                     Duration
                         .between(started, clock.instant())
@@ -70,14 +75,21 @@ class OpenRouterClient(
         }
     }
 
+    private fun checkBudget(request: LlmRequest) {
+        if (!ContextBudget.fits(request, minOf(MAX_CONTEXT_TOKENS, contextTokens - request.maxOutputTokens))) {
+            throw LlmBudgetException()
+        }
+    }
+
     private fun checkStatus(status: HttpStatusCode) {
         if (!status.isSuccess()) throw LlmException("OpenRouter HTTP ${status.value}")
     }
 
     internal fun toWire(request: LlmRequest) =
         WireRequest(
-            model = models.first(),
-            models = models,
+            model = (if (request.role == "summary") summaryModels else models).first(),
+            models = if (request.role == "summary") summaryModels else models,
+            maxTokens = request.maxOutputTokens,
             messages = request.messages.map(::toWire),
             tools = request.tools.map { WireTool(function = WireFunction(it.name, it.description, it.parameters)) }.ifEmpty { null },
             provider = WireProvider(dataCollection = "deny"),
@@ -92,7 +104,10 @@ class OpenRouterClient(
             toolCallId = message.toolCallId,
         )
 
-    internal fun parse(text: String): LlmResponse {
+    internal fun parse(
+        text: String,
+        defaultModel: String = models.first(),
+    ): LlmResponse {
         val wire =
             try {
                 json.decodeFromString<WireResponse>(text)
@@ -108,7 +123,7 @@ class OpenRouterClient(
                     content = message.content,
                     toolCalls = message.toolCalls.orEmpty().map { ToolCall(it.id, it.function.name, it.function.arguments) },
                 ),
-            model = wire.model ?: models.first(),
+            model = wire.model ?: defaultModel,
             usage =
                 wire.usage?.let {
                     LlmUsage(
@@ -123,6 +138,7 @@ class OpenRouterClient(
     }
 
     companion object {
+        private const val MAX_CONTEXT_TOKENS = 16000
         internal val json =
             Json {
                 ignoreUnknownKeys = true
@@ -141,6 +157,7 @@ internal data class WireRequest(
     val tools: List<WireTool>?,
     val provider: WireProvider,
     val usage: WireUsageRequest,
+    @SerialName("max_tokens") val maxTokens: Int,
 )
 
 @Serializable

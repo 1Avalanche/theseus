@@ -13,6 +13,8 @@ data class Incoming(
     val text: String? = null,
     val firstName: String? = null,
     val callback: String? = null,
+    val replyMessageId: Long? = null,
+    val callbackMessageId: Long? = null,
 )
 
 @Serializable
@@ -34,6 +36,7 @@ data class BotReply(
     val text: String,
     val buttons: List<List<Button>> = emptyList(),
     val adminNotice: String? = null,
+    val clearKeyboardMessageId: Long? = null,
 )
 
 @Serializable

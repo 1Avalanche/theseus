@@ -9,7 +9,7 @@
 | Пакет | Содержимое |
 |---|---|
 | `domain` | `reminder` (`Reminder`, `NewReminder`, `When`, `WhenResolver`, расписания и дубли), `user` (`User`, `AdminProfile`, статусы, `Gender`), `DomainException` + `ErrorCode`, `LocalFormats` |
-| `application` | `ReminderService`, `UserService`, `AccountsService`, `HardDeleteService`, `Operations`, `ReminderScheduler`; порты репозиториев, `Notifier`, `HealthProbe`; время — инжектируемый `Clock`. `HardDeleteService` создаётся только для test |
+| `application` | `ReminderService`, `DeliveryService`, `UserService`, `AccountsService`, `HardDeleteService`, `Operations`, `ReminderScheduler`; порты репозиториев, `Notifier`, `HealthProbe`; время — инжектируемый `Clock`. `HardDeleteService` создаётся только для test |
 | `adapters.db` | Exposed + HikariCP + Flyway: `CoreDatabase`, `ExposedUserRepository`, `ExposedInviteRepository`, `ExposedUsageRepository`, `ExposedReminderRepository`, `DatabaseOperations` |
 | `adapters.mcp` | `McpServerFactory`, `ReminderTools`, DTO инструментов |
 | `adapters.http` | `HttpModule`: Bearer-авторизация, `/mcp`, `/health`, REST |
@@ -24,9 +24,9 @@
 
 - MCP: девять инструментов для создания, чтения, изменения, удаления, snooze, паузы и возобновления напоминаний. Создание проверяет дубли; критичные изменения требуют подтверждения. Изменяющие инструменты используют общий с REST реестр `operation_results`.
 - `delete_reminder` поддерживает удаление всех текущих напоминаний по подтверждённому снимку одной транзакцией. Перенос одного срабатывания принимает исходную дату без часа; смена часа серии сохраняет остальные поля расписания. Неверная дата возвращает `invalid_date`.
-- REST: `GET /health`, пользователи, инвайты, usage и отключённые квоты; изменяющие запросы используют реестр `operation_results`. Системные вызовы уведомлений — этап 5.
+- REST: `GET /health`, пользователи, инвайты, usage, отключённые квоты, поиск доставки по Telegram message ID и snooze по кнопке; изменяющие запросы используют реестр `operation_results`.
 - Планировщик: тик раз в `THESEUS_SCHEDULER_INTERVAL_SECONDS` (30 с), разовые и повторяющиеся напоминания. Доставка «как минимум один раз»; после простоя разовое досылается с пометкой об опоздании, серия — только последнее пропущенное плановое срабатывание и просроченный snooze. Совпавшие моменты дают одно уведомление; пауза и отзыв доступа не создают досыла.
-- Уведомление — текст без кнопок snooze (обработка нажатий — этап 5).
+- Уведомление содержит кнопки snooze. Планировщик резервирует идентификатор доставки до отправки, затем записывает исход и Telegram message ID; отправка по-прежнему как минимум однократная.
 - Новый админ создаётся в `ONBOARDING`; существующий профиль сохраняется. Инвайт одноразовый, хранится хэш кода, срок задаёт конфиг. После заполнения имени и таймзоны профиль становится активным. Квоты выключены.
 - Время: `WhenResolver` считает момент в таймзоне напоминания, лимит — 5 лет вперёд, точность — минута. `RecurrenceResolver` использует утверждённый `lib-recur`; части суток и пороги дублей задаёт конфиг core.
 
@@ -47,4 +47,4 @@
 
 ## Уведомления
 
-Core отправляет текстовое уведомление в Telegram (`Notifier` → `TelegramNotifier`). Кнопки snooze и системный REST-маршрут для них — этап 5; их целевой контракт — `docs/api/rest.md`, раздел «Уведомления».
+Core отправляет текстовое уведомление с кнопками snooze в Telegram (`Notifier` → `TelegramNotifier`). Системные REST-маршруты кнопок и поиска доставки по reply — `docs/api/rest.md`, раздел «Уведомления».

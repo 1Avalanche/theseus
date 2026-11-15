@@ -8,6 +8,8 @@ import io.ktor.client.plugins.sse.SSE
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import theseus.agent.config.AgentConfig
@@ -34,6 +36,7 @@ import java.time.Clock
 import java.time.Duration
 
 /** Точка входа agent: конфиг → клиенты core и OpenRouter → пайплайн → long polling Telegram. */
+@Suppress("LongMethod") // Ручная композиция зависимостей приложения.
 fun main() {
     val log = LoggerFactory.getLogger("theseus.agent")
     val config = AgentConfig.fromEnv(System.getenv())
@@ -55,7 +58,16 @@ fun main() {
     val mcpOperations = theseus.agent.system.McpOperations(store, core)
     val reminderActions = theseus.agent.pipeline.ReminderActions(core, store, mcpOperations, ReplyRenderer(texts), texts, clock)
     val llm =
-        OpenRouterClient(http, config.openRouterUrl, config.openRouterApiKey, config.mainModels, config.llmTimeout, monitor.openRouter)
+        OpenRouterClient(
+            http,
+            config.openRouterUrl,
+            config.openRouterApiKey,
+            config.mainModels,
+            config.llmTimeout,
+            monitor.openRouter,
+            summaryModels = config.summaryModels,
+            contextTokens = config.contextTokens,
+        )
     val handler =
         MessageHandler(
             core,
@@ -66,6 +78,9 @@ fun main() {
             clock,
             usage = PersistentUsageRecorder(core, operations),
             actions = reminderActions,
+            dialogs = store.dialogs,
+            systemCore = core,
+            modelContextTokens = config.contextTokens,
         )
     TelegramLogging.install()
     val rawBot = createTelegramBot(config.telegramBotToken)
@@ -76,6 +91,7 @@ fun main() {
         val me = bot.getMe()
         log.info("Telegram-бот: @{}", me.username?.withoutAt ?: me.id.chatId.long)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        startDialogCleanup(scope, store.dialogs, clock)
         log.info("agent запущен, модели: {}", config.mainModels)
         val chatLocks = ChatLocks()
         val system =
@@ -90,9 +106,30 @@ fun main() {
                 texts,
                 hardDelete = if (config.stand == "test") HardDelete(core, store, operations, chatLocks, texts) else null,
                 reminderActions = reminderActions,
+                dialogs = store.dialogs,
+                clock = clock,
             )
         val pollingJob = TelegramBotRunner(bot, handler, system, store, operations, config.adminChatId, chatLocks).run(scope)
         monitor.start(scope, pollingJob)
         pollingJob.join()
+    }
+}
+
+private fun startDialogCleanup(
+    scope: CoroutineScope,
+    dialogs: theseus.agent.dialog.DialogStore,
+    clock: Clock,
+) = scope.launch {
+    while (isActive) {
+        try {
+            dialogs.cleanup(clock.instant())
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (
+            @Suppress("TooGenericExceptionCaught") e: Exception,
+        ) {
+            LoggerFactory.getLogger("theseus.agent").warn("Очистка истории отложена: {}", e.javaClass.simpleName)
+        }
+        kotlinx.coroutines.delay(Duration.ofHours(1).toMillis())
     }
 }

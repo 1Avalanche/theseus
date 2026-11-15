@@ -51,4 +51,5 @@ data class DeliveryRecord(
     val late: Boolean,
     val telegramMessageId: Long?,
     val error: String?,
+    val id: Long? = null,
 )
