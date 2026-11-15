@@ -16,6 +16,7 @@ import theseus.agent.llm.Role
 import theseus.agent.llm.ToolCall
 import theseus.agent.llm.ToolDefinition
 import theseus.agent.prompt.PromptBuilder
+import theseus.agent.system.BotReply
 import theseus.agent.system.NoUsageRecorder
 import theseus.agent.system.UsageRecorder
 import theseus.agent.texts.Texts
@@ -33,7 +34,9 @@ import java.util.UUID
  *    ошибка или нераспознанный результат — результат возвращается модели для исправления аргументов.
  *    Текст модели не подтверждает выполнение: без результата core ответ формируется по безопасному шаблону.
  *
- * Истории и подтверждений пока нет (этап 5). Расход каждого ответа модели сохраняется до исполнения инструментов.
+ * Поиск кандидатов возвращается модели для выбора цели; списки и итог изменения рендерит код.
+ * История остаётся этапом 5; критичные действия уже используют долговечные карточки подтверждения.
+ * Расход каждого ответа модели сохраняется до исполнения инструментов.
  */
 class MessageHandler(
     private val core: CoreClient,
@@ -44,6 +47,7 @@ class MessageHandler(
     private val clock: Clock,
     private val maxToolRounds: Int = DEFAULT_MAX_TOOL_ROUNDS,
     private val usage: UsageRecorder = NoUsageRecorder,
+    private val actions: ReminderActions? = null,
 ) {
     private val log = LoggerFactory.getLogger(MessageHandler::class.java)
     private val toolsLock = Mutex()
@@ -55,21 +59,29 @@ class MessageHandler(
         chatId: Long,
         text: String,
         eventId: String = UUID.randomUUID().toString(),
-    ): String? {
+    ): String? = handleReply(chatId, text, eventId)?.text
+
+    suspend fun handleReply(
+        chatId: Long,
+        text: String,
+        eventId: String,
+    ): BotReply? {
         val user = core.findUserByChat(chatId)
         if (user == null || !user.isActive) {
             log.info("Сообщение от неизвестного или неактивного chatId отброшено")
             return null
         }
         return try {
-            dialogue.commandReply(text, user) ?: converse(user, text, eventId)
+            dialogue.commandReply(text, user)?.let(::BotReply) ?: converse(user, text, eventId)
         } catch (e: CancellationException) {
+            throw e
+        } catch (e: theseus.agent.system.UncertainMcpException) {
             throw e
         } catch (
             @Suppress("TooGenericExceptionCaught") e: Exception,
         ) {
             log.error("Не удалось обработать сообщение user_id={}", user.id, e)
-            texts.get("reply.failure")
+            BotReply(texts.get("reply.failure"))
         }
     }
 
@@ -77,7 +89,7 @@ class MessageHandler(
         user: CoreUser,
         text: String,
         eventId: String,
-    ): String {
+    ): BotReply {
         val now = clock.instant()
         usage.before(user.id)
         val zone = ZoneId.of(requireNotNull(user.timezone))
@@ -90,7 +102,7 @@ class MessageHandler(
             round(user, messages, zone, now, "$eventId:usage:$it")?.let { return it }
         }
         log.warn("Превышено число раундов инструментов, user_id={}", user.id)
-        return texts.get("reply.failure")
+        return BotReply(texts.get("reply.failure"))
     }
 
     /** Один вызов модели. Возвращает ответ пользователю или `null`, если результаты инструментов ушли модели. */
@@ -100,7 +112,7 @@ class MessageHandler(
         zone: ZoneId,
         now: Instant,
         usageKey: String,
-    ): String? {
+    ): BotReply? {
         val invocationKey = "$usageKey:${UUID.randomUUID()}"
         val response = llm.complete(LlmRequest(messages, tools()))
         usage.record(user.id, invocationKey, response)
@@ -108,14 +120,17 @@ class MessageHandler(
         val calls = response.message.toolCalls
         if (calls.isEmpty()) {
             log.info("Ответ модели без вызова инструмента, user_id={}", user.id)
-            return texts.get(if (messages.any { it.role == Role.TOOL }) "reply.unconfirmed" else "reply.not_created")
+            return BotReply(texts.get(if (messages.any { it.role == Role.TOOL }) "reply.unconfirmed" else "reply.not_created"))
         }
         messages += response.message
-        val results = calls.map { call -> call to execute(user, call) }
+        val results = calls.mapIndexed { index, call -> call to execute(user, call, "$usageKey:tool:$index") }
         val rendered =
-            results.map { (call, result) ->
+            results.map { (call, execution) ->
+                val result = execution.result
                 when {
-                    result.isError -> null
+                    execution.reply != null -> execution.reply.text
+                    result == null || result.isError -> null
+                    call.name == "find_reminders" -> null
                     call.name == DialogReplies.TOOL_NAME -> result.text
                     else -> renderer.render(call.name, result.text, zone, now)
                 }
@@ -125,9 +140,18 @@ class MessageHandler(
         return if (renderedReplies.isNotEmpty()) {
             // Не терять уже выполненные действия и не предлагать модели повторить их при частичном успехе.
             val replies = if (renderedReplies.size == results.size) renderedReplies else renderedReplies + texts.get("reply.unconfirmed")
-            replies.joinToString("\n")
+            BotReply(
+                replies.joinToString("\n"),
+                results.flatMap {
+                    it.second.reply
+                        ?.buttons
+                        .orEmpty()
+                },
+            )
         } else {
-            results.forEach { (call, result) -> messages += ChatMessage(Role.TOOL, result.text, toolCallId = call.id) }
+            results.forEach { (call, result) ->
+                messages += ChatMessage(Role.TOOL, requireNotNull(result.result).text, toolCallId = call.id)
+            }
             null
         }
     }
@@ -135,11 +159,17 @@ class MessageHandler(
     private suspend fun execute(
         user: CoreUser,
         call: ToolCall,
-    ): ToolResult {
+        eventKey: String,
+    ): ReminderExecution {
         val arguments =
             runCatching { Json.parseToJsonElement(call.argumentsJson.ifBlank { "{}" }).jsonObject }.getOrNull()
-                ?: return ToolResult(texts.get("tool.invalid_json"), isError = true)
-        return if (call.name == DialogReplies.TOOL_NAME) dialogue.execute(user, arguments) else core.callTool(user.id, call.name, arguments)
+                ?: return ReminderExecution(ToolResult(texts.get("tool.invalid_json"), isError = true))
+        return if (call.name == DialogReplies.TOOL_NAME) {
+            ReminderExecution(dialogue.execute(user, arguments))
+        } else {
+            actions?.execute(user, call.name, arguments, eventKey)
+                ?: ReminderExecution(core.callTool(user.id, call.name, arguments))
+        }
     }
 
     private suspend fun tools(): List<ToolDefinition> =

@@ -4,7 +4,7 @@ import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
 
-enum class ReminderStatus { ACTIVE, PAUSED, DONE, DELETED }
+enum class ReminderStatus { ACTIVE, PAUSED, DONE, DELETED, UNSUPPORTED }
 
 /**
  * Напоминание или серия. Расписание — [startLocal] в [timezone] (+ [recurrenceRule] для серии);
@@ -21,6 +21,12 @@ data class Reminder(
     val nextFireAt: Instant?,
     val lastFiredAt: Instant?,
     val createdAt: Instant,
+    val excludedOccurrences: Set<Instant> = emptySet(),
+    val parentId: Long? = null,
+    val pausedUntil: Instant? = null,
+    val snoozedUntil: Instant? = null,
+    val updatedAt: Instant = createdAt,
+    val rawStatus: String? = null,
 )
 
 data class NewReminder(
@@ -29,9 +35,11 @@ data class NewReminder(
     val timezone: ZoneId,
     val startLocal: LocalDateTime,
     val nextFireAt: Instant,
+    val recurrenceRule: String? = null,
+    val parentId: Long? = null,
 )
 
-enum class DeliveryKind { SCHEDULED, SNOOZED }
+enum class DeliveryKind { SCHEDULED, SNOOZED, SCHEDULED_AND_SNOOZED }
 
 enum class DeliveryStatus { SENT, FAILED }
 

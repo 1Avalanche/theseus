@@ -65,6 +65,7 @@ data class RestReply(
 }
 
 /** Долговечный журнал агента. Методы begin возвращают сохранённую запись при техническом повторе. */
+@Suppress("TooManyFunctions") // Единый порт журнала событий и исходящих операций.
 interface AgentStore : UserErasureStore {
     suspend fun findEvent(id: String): StoredEvent?
 
@@ -87,6 +88,11 @@ interface AgentStore : UserErasureStore {
     )
 
     suspend fun beginOperation(operation: Outgoing): Pair<Outgoing, RestReply?>
+
+    suspend fun findOperation(id: UUID): Pair<Outgoing, RestReply?>?
+
+    /** Все исходящие шаги события, включая завершённые: восстановление результата без повторного LLM. */
+    suspend fun eventOperations(eventKey: String): List<Pair<Outgoing, RestReply?>>
 
     suspend fun finishOperation(
         id: UUID,
@@ -149,7 +155,7 @@ class OutgoingOperations(
     }
 
     suspend fun recover() {
-        for (operation in store.pendingOperations()) execute(operation)
+        for (operation in store.pendingOperations().filter { it.method !in setOf("MCP", "CONFIRM") }) execute(operation)
     }
 
     companion object {

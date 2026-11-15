@@ -22,6 +22,7 @@ dependencies {
     implementation(libs.postgresql)
     implementation(libs.mcp.sdk.server)
     implementation(libs.tgbotapi)
+    implementation(libs.lib.recur)
     runtimeOnly(libs.logback)
 
     testImplementation(libs.kotlinx.coroutines.test)

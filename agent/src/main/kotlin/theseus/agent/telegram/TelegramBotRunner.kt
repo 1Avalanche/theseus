@@ -81,8 +81,7 @@ class TelegramBotRunner(
                 bot.sendActionTyping(ChatId(RawChatId(input.chatId)))
                 val response =
                     handler
-                        .handle(input.chatId, requireNotNull(input.text), input.id)
-                        ?.let(::BotReply) ?: system.resume(event)
+                        .handleReply(input.chatId, requireNotNull(input.text), input.id) ?: system.resume(event)
                 store.finishEvent(input.id, response)
                 send(input.chatId, response)
                 store.delivered(input.id)

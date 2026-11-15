@@ -26,7 +26,25 @@ data class When(
     val date: LocalDate? = null,
     val time: LocalTime? = null,
     val after: After? = null,
+    val partOfDay: PartOfDay? = null,
 )
+
+enum class PartOfDay { MORNING, DAY, EVENING }
+
+/** Настройки разрешаются при создании; существующие расписания не пересчитываются. */
+@Suppress("MagicNumber") // Утверждённые часы частей суток, переопределяемые конфигом.
+data class DayTimes(
+    val morning: LocalTime = LocalTime.of(9, 0),
+    val day: LocalTime = LocalTime.of(14, 0),
+    val evening: LocalTime = LocalTime.of(19, 0),
+) {
+    fun resolve(part: PartOfDay): LocalTime =
+        when (part) {
+            PartOfDay.MORNING -> morning
+            PartOfDay.DAY -> day
+            PartOfDay.EVENING -> evening
+        }
+}
 
 /** Разрешённый момент: локальное «настенное» время в таймзоне и соответствующий момент UTC. */
 data class ResolvedTime(
@@ -49,12 +67,17 @@ data class ResolvedTime(
 class WhenResolver(
     private val defaultTime: LocalTime,
     private val maxYearsAhead: Long = MAX_YEARS_AHEAD,
+    private val dayTimes: DayTimes = DayTimes(),
 ) {
     fun resolve(
         value: When,
         now: Instant,
         zone: ZoneId,
     ): ResolvedTime {
+        if (value.partOfDay != null) {
+            if (value.time != null) throw DomainException(ErrorCode.INVALID_WHEN)
+            return resolve(value.copy(time = dayTimes.resolve(value.partOfDay), partOfDay = null), now, zone)
+        }
         validate(value)
         val nowLocal = ZonedDateTime.ofInstant(now, zone)
         val after = value.after

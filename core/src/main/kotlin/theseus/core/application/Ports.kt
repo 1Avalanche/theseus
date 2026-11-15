@@ -23,6 +23,33 @@ interface UserRepository {
 }
 
 interface ReminderRepository {
+    /** Блокировка пользователя сериализует планировщик и изменения его напоминаний в одной транзакции. */
+    suspend fun <T> withUserLock(
+        userId: Long,
+        block: suspend () -> T,
+    ): T
+
+    suspend fun find(
+        userId: Long,
+        id: Long,
+    ): Reminder?
+
+    suspend fun list(userId: Long): List<Reminder>
+
+    suspend fun save(
+        reminder: Reminder,
+        now: Instant,
+    ): Reminder
+
+    /** Пишет доставку и новое состояние серии одной транзакцией. */
+    suspend fun record(
+        reminder: Reminder,
+        delivery: DeliveryRecord?,
+        now: Instant,
+    )
+
+    suspend fun findResumable(now: Instant): List<Reminder>
+
     /** Агрегаты ожидающих доставок без чтения пользовательских текстов и ограничения размером пачки. */
     suspend fun deliveryBacklog(now: Instant): DeliveryBacklog
 

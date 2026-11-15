@@ -2,13 +2,13 @@
 
 Сервис данных и домена: напоминания, пользователи, доступ, учёт usage, планировщик, уведомления (`Notifier` → Telegram). Наружу — MCP (инструменты для LLM) и internal REST (системные вызовы агента, не-ИИ клиенты). Архитектура — `docs/architecture.md`, решения — `docs/DECISIONS.md` (разделы 2–5, 7).
 
-**Статус:** этап 3 реализован. Gradle-модуль `:core`, плагины `theseus.application` + `theseus.serialization`, точка входа `theseus.core.MainKt`. Проверки и их границы — `docs/roadmap.md`.
+**Статус:** этап 4 реализован и проверен локально. Gradle-модуль `:core`, плагины `theseus.application` + `theseus.serialization`, точка входа `theseus.core.MainKt`. Проверки и их границы — `docs/roadmap.md`.
 
 ## Пакеты `theseus.core`
 
 | Пакет | Содержимое |
 |---|---|
-| `domain` | `reminder` (`Reminder`, `NewReminder`, `When`, `WhenResolver`), `user` (`User`, `AdminProfile`, статусы, `Gender`), `DomainException` + `ErrorCode`, `LocalFormats`. Без инфраструктуры |
+| `domain` | `reminder` (`Reminder`, `NewReminder`, `When`, `WhenResolver`, расписания и дубли), `user` (`User`, `AdminProfile`, статусы, `Gender`), `DomainException` + `ErrorCode`, `LocalFormats` |
 | `application` | `ReminderService`, `UserService`, `AccountsService`, `HardDeleteService`, `Operations`, `ReminderScheduler`; порты репозиториев, `Notifier`, `HealthProbe`; время — инжектируемый `Clock`. `HardDeleteService` создаётся только для test |
 | `adapters.db` | Exposed + HikariCP + Flyway: `CoreDatabase`, `ExposedUserRepository`, `ExposedInviteRepository`, `ExposedUsageRepository`, `ExposedReminderRepository`, `DatabaseOperations` |
 | `adapters.mcp` | `McpServerFactory`, `ReminderTools`, DTO инструментов |
@@ -22,12 +22,12 @@
 
 ## Реализовано
 
-- MCP: только `create_reminder`, **только разовые** (`when`); `recurrence` → `invalid_recurrence`. Проверки дублей нет, `force` принимается и игнорируется. Остальные 8 инструментов — этапы 4–5.
+- MCP: девять инструментов для создания, чтения, изменения, удаления, snooze, паузы и возобновления напоминаний. Создание проверяет дубли; критичные изменения требуют подтверждения. Изменяющие инструменты используют общий с REST реестр `operation_results`.
 - REST: `GET /health`, пользователи, инвайты, usage и отключённые квоты; изменяющие запросы используют реестр `operation_results`. Системные вызовы уведомлений — этап 5.
-- Планировщик: тик раз в `THESEUS_SCHEDULER_INTERVAL_SECONDS` (30 с), только разовые напоминания. Доставка «как минимум один раз»; просроченные за время простоя досылаются с пометкой об опоздании; постоянные ошибки Telegram (400/403) закрывают напоминание как `FAILED`; пользователям не в `ACTIVE` уведомления не отправляются (напоминание закрывается без доставки).
+- Планировщик: тик раз в `THESEUS_SCHEDULER_INTERVAL_SECONDS` (30 с), разовые и повторяющиеся напоминания. Доставка «как минимум один раз»; после простоя разовое досылается с пометкой об опоздании, серия — только последнее пропущенное плановое срабатывание и просроченный snooze. Совпавшие моменты дают одно уведомление; пауза и отзыв доступа не создают досыла.
 - Уведомление — текст без кнопок snooze (обработка нажатий — этап 5).
 - Новый админ создаётся в `ONBOARDING`; существующий профиль сохраняется. Инвайт одноразовый, хранится хэш кода, срок задаёт конфиг. После заполнения имени и таймзоны профиль становится активным. Квоты выключены.
-- Время: `WhenResolver` считает момент в таймзоне пользователя, лимит — 5 лет вперёд, точность — минута.
+- Время: `WhenResolver` считает момент в таймзоне напоминания, лимит — 5 лет вперёд, точность — минута. `RecurrenceResolver` использует утверждённый `lib-recur`; части суток и пороги дублей задаёт конфиг core.
 
 Планировщик отмечает успешное завершение каждого прохода, включая пустой. Снимок `/tmp/theseus-core.monitor.json` обновляется каждые 30 секунд; количество и время самого старого наступившего активного напоминания вычисляются агрегатно, без текстов и без ограничения размером пакета планировщика. Эксплуатация — [monitoring.md](../monitoring.md).
 
@@ -42,8 +42,8 @@
 
 ## Данные
 
-Схема `core`: `users`, `invites`, `reminders`, `reminder_deliveries`, `llm_usage`, `operation_results`, `erased_operations` — `docs/database.md`. Core мигрирует только эту схему. `V1` создаёт пользователей и напоминания; `V2` — инвайты, usage и результаты операций; `V3` — идентификаторы удалённых операций.
+Схема `core`: `users`, `invites`, `reminders`, `reminder_deliveries`, `llm_usage`, `operation_results`, `erased_operations` — `docs/database.md`. Core мигрирует только эту схему. `V1` создаёт пользователей и напоминания; `V2` — инвайты, usage и результаты операций; `V3` — идентификаторы удалённых операций; `V4` расширяет допустимые виды доставки объединённым плановым и отложенным срабатыванием.
 
 ## Уведомления
 
-core сам отправляет уведомление (кнопки snooze — этап 5; пока текст без кнопок) в Telegram (`Notifier` → `TelegramNotifier`) с inline-кнопками snooze (+15 минут, +1 час, завтра). Нажатия приходят агенту; он вызывает `POST /internal/v1/deliveries/{delivery_id}/snooze`. Формат `callback_data` (`snz:<delivery_id>:<вариант>`) — `docs/api/rest.md`, раздел «Уведомления».
+Core отправляет текстовое уведомление в Telegram (`Notifier` → `TelegramNotifier`). Кнопки snooze и системный REST-маршрут для них — этап 5; их целевой контракт — `docs/api/rest.md`, раздел «Уведомления».

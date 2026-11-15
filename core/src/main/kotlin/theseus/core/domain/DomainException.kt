@@ -13,6 +13,13 @@ enum class ErrorCode(
     TOO_FAR("too_far"),
     INVALID_RECURRENCE("invalid_recurrence"),
     NOT_FOUND("not_found"),
+    NOT_RECURRING("not_recurring"),
+    OCCURRENCE_NOT_FOUND("occurrence_not_found"),
+    INVALID_STATE("invalid_state"),
+    UNSUPPORTED_STATE("unsupported_state"),
+    CONFIRMATION_REQUIRED("confirmation_required"),
+    CONFIRMATION_STALE("confirmation_stale"),
+    IDEMPOTENCY_CONFLICT("idempotency_conflict"),
     USER_INACTIVE("user_inactive"),
     INTERNAL("internal"),
 }

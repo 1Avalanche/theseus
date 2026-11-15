@@ -24,6 +24,7 @@ import java.time.ZoneOffset
 import java.util.UUID
 
 /** Собственная схема agent, отдельная роль БД. Секреты и содержимое событий — только ciphertext. */
+@Suppress("TooManyFunctions") // Реализация единого порта долговечного журнала.
 class JdbcAgentStore(
     private val pool: HikariDataSource,
     private val cipher: JournalCipher,
@@ -159,6 +160,30 @@ class JdbcAgentStore(
                     it.setObject(7, clock.instant().atOffset(ZoneOffset.UTC))
                     it.executeUpdate()
                 }
+            if (operation.method == "CONFIRM") {
+                val kind =
+                    when (operation.path) {
+                        "delete_reminder" -> "CONFIRM_DELETE"
+                        "create_reminder" -> "CONFIRM_DUPLICATE"
+                        else -> "CONFIRM_SERIES_RESET"
+                    }
+                connection
+                    .prepareStatement(
+                        """insert into pending_actions(id,user_id,kind,operation_id,created_at,expires_at)
+                        select id,user_id,?,?::uuid,created_at,created_at+interval '1 hour'
+                        from outgoing_operations where event_key=? on conflict(id) do nothing""",
+                    ).use {
+                        it.setString(1, kind)
+                        it.setString(
+                            2,
+                            operation.body.getValue("operation_id").let { value ->
+                                (value as kotlinx.serialization.json.JsonPrimitive).content
+                            },
+                        )
+                        it.setString(3, operation.eventKey)
+                        it.executeUpdate()
+                    }
+            }
             connection.prepareStatement("select * from outgoing_operations where event_key=?").use {
                 it.setString(1, operation.eventKey)
                 it.executeQuery().use { row ->
@@ -183,16 +208,71 @@ class JdbcAgentStore(
         connection
             .prepareStatement(
                 """update outgoing_operations set response_status=?,response_encrypted=?,completed_at=?
-            where id=? and completed_at is null""",
+                where id=? and completed_at is null""",
             ).use {
                 it.setInt(1, reply.status)
                 it.setString(2, cipher.encrypt("response:$id", reply.body.toString()))
                 it.setObject(3, clock.instant().atOffset(ZoneOffset.UTC))
                 it.setObject(4, id)
                 it.executeUpdate()
-                Unit
             }
+        connection
+            .prepareStatement(
+                "update pending_actions set resolved_at=?,resolution=? where id=? and resolved_at is null",
+            ).use {
+                it.setObject(1, clock.instant().atOffset(ZoneOffset.UTC))
+                it.setString(2, (reply.body["resolution"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "CONFIRMED")
+                it.setObject(3, id)
+                it.executeUpdate()
+            }
+        Unit
     }
+
+    override suspend fun findOperation(id: UUID): Pair<Outgoing, RestReply?>? =
+        pool.tx { connection ->
+            connection.prepareStatement("select * from outgoing_operations where id=?").use {
+                it.setObject(1, id)
+                it.executeQuery().use { row ->
+                    if (!row.next()) return@tx null
+                    val stored = outgoing(row, cipher)
+                    val result =
+                        row.getString("response_encrypted")?.let { encrypted ->
+                            RestReply(
+                                row.getInt("response_status"),
+                                Json.parseToJsonElement(cipher.decrypt("response:${stored.id}", encrypted)).jsonObject,
+                            )
+                        }
+                    stored to result
+                }
+            }
+        }
+
+    override suspend fun eventOperations(eventKey: String): List<Pair<Outgoing, RestReply?>> =
+        pool.tx { connection ->
+            val prefix = "$eventKey:"
+            connection
+                .prepareStatement(
+                    "select * from outgoing_operations where left(event_key,length(?))=? order by created_at,event_key",
+                ).use {
+                    it.setString(1, prefix)
+                    it.setString(2, prefix)
+                    it.executeQuery().use { row ->
+                        buildList {
+                            while (row.next()) {
+                                val stored = outgoing(row, cipher)
+                                val result =
+                                    row.getString("response_encrypted")?.let { encrypted ->
+                                        RestReply(
+                                            row.getInt("response_status"),
+                                            Json.parseToJsonElement(cipher.decrypt("response:${stored.id}", encrypted)).jsonObject,
+                                        )
+                                    }
+                                add(stored to result)
+                            }
+                        }
+                    }
+                }
+        }
 
     override suspend fun pendingOperations(): List<Outgoing> =
         pool.tx { connection ->

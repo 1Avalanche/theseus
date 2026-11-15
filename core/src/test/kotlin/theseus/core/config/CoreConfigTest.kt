@@ -12,6 +12,34 @@ import java.time.ZoneId
 
 class CoreConfigTest {
     @Test
+    fun `reads day times and duplicate thresholds and rejects invalid configuration`() {
+        val configured =
+            CoreConfig.fromEnv(
+                valid +
+                    mapOf(
+                        "THESEUS_MORNING_TIME" to "08:30",
+                        "THESEUS_DAY_TIME" to "13:20",
+                        "THESEUS_EVENING_TIME" to "20:15",
+                        "THESEUS_DUPLICATE_TEXT_THRESHOLD" to "0.75",
+                        "THESEUS_DUPLICATE_WINDOW_MINUTES" to "45",
+                    ),
+            )
+        assertEquals(LocalTime.of(8, 30), configured.dayTimes.morning)
+        assertEquals(LocalTime.of(13, 20), configured.dayTimes.day)
+        assertEquals(LocalTime.of(20, 15), configured.dayTimes.evening)
+        assertEquals(0.75, configured.duplicateTextThreshold)
+        assertEquals(Duration.ofMinutes(45), configured.duplicateWindow)
+        for ((key, value) in listOf(
+            "THESEUS_DAY_TIME" to "25:00",
+            "THESEUS_DUPLICATE_TEXT_THRESHOLD" to "NaN",
+            "THESEUS_DUPLICATE_TEXT_THRESHOLD" to "1.01",
+            "THESEUS_DUPLICATE_WINDOW_MINUTES" to "-1",
+        )) {
+            assertThrows<ConfigException> { CoreConfig.fromEnv(valid + (key to value)) }
+        }
+    }
+
+    @Test
     fun `stand defaults to prod and only explicit test enables test stand`() {
         assertEquals("prod", CoreConfig.fromEnv(valid).stand)
         assertEquals("prod", CoreConfig.fromEnv(valid + ("THESEUS_STAND" to "prod")).stand)

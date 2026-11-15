@@ -19,6 +19,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import theseus.core.adapters.canonical
 import theseus.core.application.AccountsService
 import theseus.core.application.HardDeleteService
 import theseus.core.application.OperationReply

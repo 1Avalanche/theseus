@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "properties": {
+    "reminder_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "series",
+        "occurrence"
+      ]
+    },
+    "occurrence_local": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "reminder_id"
+  ],
+  "additionalProperties": false
+}

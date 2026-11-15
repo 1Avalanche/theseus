@@ -38,6 +38,6 @@ class ReplyRendererTest {
 
         assertNull(renderer.render("create_reminder", """{"status":"possible_duplicate","candidates":[]}""", zone, now))
         assertNull(renderer.render("create_reminder", "не json", zone, now))
-        assertNull(renderer.render("list_reminders", """{"reminders":[]}""", zone, now))
+        assertEquals("Напоминаний пока нет.", renderer.render("list_reminders", """{"reminders":[]}""", zone, now))
     }
 }

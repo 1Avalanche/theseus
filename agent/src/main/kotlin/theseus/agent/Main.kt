@@ -52,6 +52,8 @@ fun main() {
     val store = JdbcAgentStore.connect(config.databaseUrl, config.databaseUser, config.databasePassword, config.journalKey, clock)
     store.migrate()
     val operations = OutgoingOperations(store, core)
+    val mcpOperations = theseus.agent.system.McpOperations(store, core)
+    val reminderActions = theseus.agent.pipeline.ReminderActions(core, store, mcpOperations, ReplyRenderer(texts), texts, clock)
     val llm =
         OpenRouterClient(http, config.openRouterUrl, config.openRouterApiKey, config.mainModels, config.llmTimeout, monitor.openRouter)
     val handler =
@@ -63,6 +65,7 @@ fun main() {
             texts,
             clock,
             usage = PersistentUsageRecorder(core, operations),
+            actions = reminderActions,
         )
     TelegramLogging.install()
     val rawBot = createTelegramBot(config.telegramBotToken)
@@ -86,6 +89,7 @@ fun main() {
                 requireNotNull(me.username).withoutAt,
                 texts,
                 hardDelete = if (config.stand == "test") HardDelete(core, store, operations, chatLocks, texts) else null,
+                reminderActions = reminderActions,
             )
         val pollingJob = TelegramBotRunner(bot, handler, system, store, operations, config.adminChatId, chatLocks).run(scope)
         monitor.start(scope, pollingJob)

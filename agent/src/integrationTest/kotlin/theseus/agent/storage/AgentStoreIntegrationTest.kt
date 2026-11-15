@@ -33,6 +33,62 @@ import java.util.UUID
 @Testcontainers(disabledWithoutDocker = true)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AgentStoreIntegrationTest {
+    @Test
+    fun `confirmation metadata and fixed execution key survive restart and user erasure`() =
+        runTest {
+            val id = UUID.randomUUID()
+            val executionId = UUID.randomUUID()
+            val body =
+                Json
+                    .parseToJsonElement(
+                        """{"name":"delete_reminder","operation_id":"$executionId","arguments":{"reminder_id":42},
+                "confirmation":{"fingerprint":"PRIVATE-CARD","created_at":"2026-11-12T10:00:00Z"}}""",
+                    ).jsonObject
+            val outgoing = Outgoing(id, "confirmation-index:card", "CONFIRM", "delete_reminder", body, 777)
+            store(pool()).use { it.beginOperation(outgoing) }
+            val secondPool = pool()
+            store(secondPool).use { journal ->
+                assertEquals(outgoing, journal.findOperation(id)!!.first)
+                assertEquals(1, journal.eventOperations("confirmation-index").size)
+                secondPool.connection.use { connection ->
+                    connection.prepareStatement("select operation_id,expires_at-created_at from pending_actions where id=?").use {
+                        it.setObject(1, id)
+                        it.executeQuery().use { row ->
+                            assertTrue(row.next())
+                            assertEquals(executionId, row.getObject(1, UUID::class.java))
+                            assertEquals("01:00:00", row.getString(2))
+                        }
+                    }
+                }
+                journal.finishOperation(
+                    id,
+                    RestReply(
+                        200,
+                        Json.parseToJsonElement("""{"text":"Оставил как есть.","resolution":"CANCELLED"}""").jsonObject,
+                    ),
+                )
+                assertEquals(
+                    "CANCELLED",
+                    journal
+                        .findOperation(id)!!
+                        .second!!
+                        .body["resolution"]!!
+                        .toString()
+                        .trim('"'),
+                )
+                journal.eraseUser(777, 777, emptyList())
+                assertEquals(null, journal.findOperation(id))
+                secondPool.connection.use { connection ->
+                    connection.createStatement().use { statement ->
+                        statement.executeQuery("select count(*) from pending_actions where user_id=777").use { row ->
+                            assertTrue(row.next())
+                            assertEquals(0, row.getInt(1))
+                        }
+                    }
+                }
+            }
+        }
+
     private val postgres = PostgreSQLContainer("postgres:17-alpine")
     private val clock = Clock.fixed(Instant.parse("2026-11-12T10:00:00Z"), ZoneOffset.UTC)
     private val key = "ab".repeat(32)

@@ -22,6 +22,8 @@ import kotlinx.serialization.json.longOrNull
 object McpServerFactory {
     /** Ключ `_meta`, в котором агент передаёт id пользователя. */
     const val USER_META_KEY = "theseus/user_id"
+    const val OPERATION_META_KEY = "theseus/operation_id"
+    const val CONFIRMATION_META_KEY = "theseus/confirmation"
 
     fun create(tools: ReminderTools): Server {
         val server =
@@ -29,8 +31,17 @@ object McpServerFactory {
                 Implementation(name = "theseus-core", version = "1"),
                 ServerOptions(capabilities = ServerCapabilities(tools = ServerCapabilities.Tools(listChanged = false))),
             )
-        server.addTool(loadTool("create_reminder")) { request ->
-            tools.createReminder(request.userId(), request.arguments).toResult()
+        for (name in ReminderTools.names) {
+            server.addTool(loadTool(name)) { request ->
+                tools
+                    .call(
+                        name,
+                        request.userId(),
+                        request.arguments,
+                        (request.meta?.json?.get(OPERATION_META_KEY) as? kotlinx.serialization.json.JsonPrimitive)?.content,
+                        request.meta?.json?.get(CONFIRMATION_META_KEY) as? kotlinx.serialization.json.JsonObject,
+                    ).toResult()
+            }
         }
         return server
     }
@@ -49,12 +60,7 @@ object McpServerFactory {
         )
     }
 
-    private fun CallToolRequest.userId(): Long? =
-        meta
-            ?.json
-            ?.get(USER_META_KEY)
-            ?.jsonPrimitive
-            ?.longOrNull
+    private fun CallToolRequest.userId(): Long? = (meta?.json?.get(USER_META_KEY) as? kotlinx.serialization.json.JsonPrimitive)?.longOrNull
 
     private fun ToolOutcome.toResult() = CallToolResult(content = listOf(TextContent(json)), isError = isError)
 

@@ -47,7 +47,17 @@ fun main() {
     log.info("Админ: user_id={}", admin.id)
 
     val users = UserService(userRepository)
-    val reminders = ReminderService(reminderRepository, users, WhenResolver(config.defaultTime), clock)
+    val reminders =
+        ReminderService(
+            reminderRepository,
+            users,
+            WhenResolver(config.defaultTime, dayTimes = config.dayTimes),
+            clock,
+            theseus.core.domain.reminder
+                .RecurrenceResolver(config.defaultTime, config.dayTimes),
+            theseus.core.domain.reminder
+                .DuplicatePolicy(config.duplicateTextThreshold, config.duplicateWindow),
+        )
     TelegramLogging.install()
     val deliverySignal = DeliverySignal(clock)
     val bot =
@@ -68,7 +78,7 @@ fun main() {
             serviceToken = config.serviceToken,
             health = database,
             users = users,
-            mcpServer = McpServerFactory.create(ReminderTools(reminders, texts)),
+            mcpServer = McpServerFactory.create(ReminderTools(reminders, texts, DatabaseOperations(database))),
             accounts =
                 AccountsRoutes(
                     AccountsService(userRepository, clock, config.inviteTtl),
