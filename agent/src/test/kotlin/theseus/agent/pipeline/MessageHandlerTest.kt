@@ -26,6 +26,52 @@ import java.time.ZoneOffset
 
 class MessageHandlerTest {
     @Test
+    fun `ambiguous batch pause never changes either series and offers ids`() =
+        runTest {
+            val core = FakeCore(mapOf(owner.chatId to owner))
+            core.results +=
+                ToolResult(
+                    """{"candidates":[{"id":17,"text":"Пить воду","next_at_local":"2026-11-03T18:45"},
+                        {"id":18,"text":"Пить воду","next_at_local":"2026-11-03T18:45"}]}""",
+                    false,
+                )
+            val llm =
+                FakeLlm(
+                    ChatMessage(Role.ASSISTANT, null, toolCalls = listOf(ToolCall("find", "find_reminders", """{"query":"вода"}"""))),
+                    ChatMessage(
+                        Role.ASSISTANT,
+                        null,
+                        toolCalls =
+                            listOf(
+                                ToolCall("pause1", "pause_reminder", """{"reminder_id":17}"""),
+                                ToolCall("pause2", "pause_reminder", """{"reminder_id":18}"""),
+                            ),
+                    ),
+                )
+            val result = requireNotNull(handler(core, llm).handle(owner.chatId, "Приостанови серию про воду"))
+            assertEquals(listOf("find_reminders"), core.calls.map { it.second })
+            assertTrue(result.contains("ID 17"), result)
+            assertTrue(result.contains("ID 18"), result)
+            assertTrue(result.contains("ничего не менял"), result)
+        }
+
+    @Test
+    fun `invalid date from core gets explicit reply without generic clarification`() =
+        runTest {
+            val core = FakeCore(mapOf(owner.chatId to owner), ToolResult("""{"error":{"code":"invalid_date","message":"ошибка"}}""", true))
+            val llm =
+                FakeLlm(
+                    ChatMessage(
+                        Role.ASSISTANT,
+                        null,
+                        toolCalls = listOf(ToolCall("list", "list_reminders", """{"from":"2026-11-31","to":"2026-11-31"}""")),
+                    ),
+                )
+            assertEquals(texts.get("reply.error.invalid_date"), handler(core, llm).handle(owner.chatId, "Покажи напоминания на 31 ноября"))
+            assertEquals(1, llm.requests.size)
+        }
+
+    @Test
     fun `find candidates reach model before updating selected reminder`() =
         runTest {
             val candidates = """{"candidates":[{"id":17,"text":"Позвонить маме","timezone":"Europe/Moscow"}]}"""

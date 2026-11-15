@@ -29,6 +29,9 @@ class ReplyRenderer(
         now: Instant,
     ): String? {
         val result = parseObject(resultJson) ?: return null
+        if (tool == "delete_reminder" && result.string("status") == "deleted_all") {
+            return texts.get("reply.deleted_all", mapOf("count" to result.string("deleted_count").orEmpty()))
+        }
         val reminder = result["reminder"] as? JsonObject
         return when (tool) {
             "create_reminder" ->
@@ -44,22 +47,30 @@ class ReplyRenderer(
                     null
                 }
             "update_reminder", "snooze_reminder", "pause_reminder", "resume_reminder", "delete_reminder" ->
-                if (reminder != null &&
-                    result.string("status") in setOf("updated", "snoozed", "paused", "resumed", "deleted", "occurrence_skipped")
-                ) {
-                    texts.get(
-                        "reply.${result.string("status")}",
-                        mapOf(
-                            "text" to reminder.string("text").orEmpty(),
-                            "when" to (if (tool == "snooze_reminder") snoozed(reminder, zone, now) else schedule(reminder, zone, now)),
-                        ),
-                    ) + warnings(result)
-                } else {
-                    null
-                }
+                changed(tool, result, zone, now)
             "get_reminder" -> reminder?.let { item(it, zone, now) }
             "list_reminders", "find_reminders" -> list(result, zone, now)
             else -> null
+        }
+    }
+
+    private fun changed(
+        tool: String,
+        result: JsonObject,
+        zone: ZoneId,
+        now: Instant,
+    ): String? {
+        val reminder = result["reminder"] as? JsonObject ?: return null
+        return if (result.string("status") in setOf("updated", "snoozed", "paused", "resumed", "deleted", "occurrence_skipped")) {
+            texts.get(
+                "reply.${result.string("status")}",
+                mapOf(
+                    "text" to reminder.string("text").orEmpty(),
+                    "when" to (if (tool == "snooze_reminder") snoozed(reminder, zone, now) else schedule(reminder, zone, now)),
+                ),
+            ) + warnings(result)
+        } else {
+            null
         }
     }
 
@@ -114,9 +125,26 @@ class ReplyRenderer(
         zone: ZoneId,
         now: Instant,
     ): String {
+        if (name == "delete_reminder" && args.string("scope") == "all") {
+            val count = (data["reminders"] as? JsonArray)?.size ?: 0
+            return texts.get("confirmation.delete_all", mapOf("count" to count.toString()))
+        }
+        if (name == "create_reminder") {
+            val candidates = (data["candidates"] as? JsonArray).orEmpty()
+            val shown = candidates.take(MAX_DUPLICATES_SHOWN).joinToString("\n") { item(it.jsonObject, zone, now) }
+            val more =
+                if (candidates.size > MAX_DUPLICATES_SHOWN) {
+                    "\n" + texts.get("confirmation.more", mapOf("count" to (candidates.size - MAX_DUPLICATES_SHOWN).toString()))
+                } else {
+                    ""
+                }
+            val proposed = (data["proposed"] as? JsonObject)?.let { item(it, zone, now) }.orEmpty()
+            val same = candidates.take(MAX_DUPLICATES_SHOWN).any { item(it.jsonObject, zone, now) == proposed }
+            val added = if (same) "" else "\n" + texts.get("confirmation.proposed", mapOf("target" to proposed))
+            return texts.get("confirmation.duplicate", mapOf("existing" to shown + more, "proposed" to added))
+        }
         val key =
             when (name) {
-                "create_reminder" -> "confirmation.duplicate"
                 "delete_reminder" -> if (args.string("scope") == "occurrence") "confirmation.skip" else "confirmation.delete"
                 else -> "confirmation.reset"
             }
@@ -124,12 +152,6 @@ class ReplyRenderer(
         val target = reminder?.let { item(it, zone, now) }.orEmpty()
         val occurrence = args.string("occurrence_local")?.let { "\n" + texts.get("confirmation.occurrence", mapOf("at" to it)) }.orEmpty()
         val delta = recurrenceDelta(args)
-        val candidates =
-            (data["candidates"] as? JsonArray)
-                ?.joinToString("\n") {
-                    item(it.jsonObject, zone, now)
-                }?.let { "\n" + texts.get("confirmation.candidates") + "\n$it" }
-                .orEmpty()
         return texts.get(
             key,
             mapOf(
@@ -138,11 +160,11 @@ class ReplyRenderer(
                 "children" to data.string("pending_children_count").orEmpty(),
             ),
         ) +
-            occurrence + delta + candidates + "\n" + texts.get("confirmation.ttl")
+            occurrence + delta + "\n" + texts.get("confirmation.ttl")
     }
 
     private fun recurrenceDelta(args: JsonObject): String =
-        (args["recurrence"] as? JsonObject)
+        ((args["recurrence"] ?: args["when"]) as? JsonObject)
             ?.entries
             ?.joinToString("\n") { (field, value) ->
                 val label = texts.get("recurrence.field.$field")
@@ -168,6 +190,22 @@ class ReplyRenderer(
         now: Instant,
     ): String = texts.get("reminders.card", mapOf("text" to reminder.string("text").orEmpty(), "when" to schedule(reminder, zone, now)))
 
+    fun choices(
+        resultJson: String?,
+        zone: ZoneId,
+        now: Instant,
+    ): String {
+        val candidates = resultJson?.let(::parseObject)?.get("candidates") as? JsonArray
+        val shown =
+            candidates
+                ?.take(MAX_CHOICES_SHOWN)
+                ?.joinToString("\n") {
+                    val row = it.jsonObject
+                    texts.get("reminders.choice", mapOf("id" to row.string("id").orEmpty(), "item" to item(row, zone, now)))
+                }.orEmpty()
+        return texts.get("reply.choose_reminder") + if (shown.isEmpty()) "" else "\n$shown"
+    }
+
     private fun schedule(
         reminder: JsonObject,
         zone: ZoneId,
@@ -189,8 +227,7 @@ class ReplyRenderer(
                 texts.get(
                     "recurrence.schedule",
                     mapOf(
-                        "frequency" to texts.get("recurrence.freq.$freq"),
-                        "interval" to interval,
+                        "frequency" to frequency(freq, interval.toInt()),
                         "time" to recurring.string("time").orEmpty(),
                     ),
                 ) +
@@ -254,6 +291,28 @@ class ReplyRenderer(
         return prefix + texts.get("recurrence.weekday.$suffix")
     }
 
+    private fun frequency(
+        freq: String,
+        interval: Int,
+    ): String {
+        if (interval == 1) return texts.get("recurrence.freq.$freq")
+        val form =
+            when {
+                interval % 100 in 11..14 -> "many"
+                interval % 10 == 1 -> "one"
+                interval % 10 in 2..4 -> "few"
+                else -> "many"
+            }
+        return texts.get("recurrence.every", mapOf("count" to interval.toString(), "unit" to texts.get("recurrence.unit.$freq.$form")))
+    }
+
+    /** Только известные коды; текст ошибки от модели или core пользователю напрямую не передаётся. */
+    fun error(resultJson: String): String? {
+        val error = parseObject(resultJson)?.get("error") as? JsonObject ?: return null
+        val code = error.string("code") ?: return null
+        return if (code in USER_ERRORS) texts.get("reply.error.$code") else null
+    }
+
     private fun ifNotEmpty(
         value: String,
         key: String,
@@ -286,6 +345,9 @@ class ReplyRenderer(
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
 
     companion object {
+        private const val MAX_DUPLICATES_SHOWN = 2
+        private const val MAX_CHOICES_SHOWN = 5
+        private val USER_ERRORS = setOf("invalid_date", "not_found", "occurrence_not_found", "not_recurring", "unsupported_state")
         private val RU: Locale = Locale.of("ru")
         private val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
         private val DAY_MONTH: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMMM", RU)

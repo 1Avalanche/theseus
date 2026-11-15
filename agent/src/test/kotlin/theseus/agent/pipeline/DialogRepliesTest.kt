@@ -11,6 +11,21 @@ import theseus.agent.core.CoreUser
 import theseus.agent.texts.Texts
 
 class DialogRepliesTest {
+    @Test
+    fun `specific clarification topics explain actual problem without claiming changes`() {
+        for ((topic, key) in mapOf(
+            "unsupported_recurrence" to "reply.unsupported_recurrence",
+            "invalid_date" to "reply.error.invalid_date",
+            "choose_reminder" to "reply.choose_reminder",
+            "missing_time" to "reply.missing_time",
+        )) {
+            val result = replies.execute(user, Json.parseToJsonElement("""{"topic":"$topic"}""").jsonObject)
+            assertFalse(result.isError)
+            assertEquals(texts.get(key), result.text)
+            assertFalse(result.text.contains("Календарь"))
+        }
+    }
+
     private val texts = Texts.load("texts/agent.properties")
     private val replies = DialogReplies(texts)
     private val user = CoreUser(7, 4242, "active", "Настя", "female", "Asia/Yekaterinburg")

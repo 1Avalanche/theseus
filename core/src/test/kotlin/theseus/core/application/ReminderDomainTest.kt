@@ -25,6 +25,65 @@ import java.time.LocalTime
 import java.time.ZoneId
 
 class ReminderDomainTest {
+    @Test
+    fun `unknown reminder blocks delete all without hiding it behind empty preview`() =
+        runTest {
+            val root = series()
+            reminders.save(root.copy(status = ReminderStatus.UNSUPPORTED, rawStatus = "future_status"), clock.instant())
+            val preview = service.list(1)
+            assertTrue(preview.reminders.isEmpty())
+            assertEquals(1, preview.unsupportedCount)
+            val snapshot = Confirmation(requireNotNull(preview.fingerprint), clock.instant())
+            assertEquals(ErrorCode.UNSUPPORTED_STATE, assertThrows<DomainException> { service.deleteAll(1, snapshot) }.error)
+            assertEquals("future_status", reminders.reminders.getValue(root.id).rawStatus)
+        }
+
+    @Test
+    fun `delete all requires snapshot and covers paused series transfers and own one time reminders`() =
+        runTest {
+            val root = series()
+            moveFirst(root.id)
+            service.pause(1, root.id, null, null)
+            service.create(1, "Проверить почту", When(time = LocalTime.of(18, 0)), null)
+            service.create(2, "Чужое", When(time = LocalTime.of(18, 0)), null)
+            assertEquals(ErrorCode.CONFIRMATION_REQUIRED, assertThrows<DomainException> { service.deleteAll(1, null) }.error)
+            assertEquals(3, service.list(1).reminders.size)
+            val snapshot = Confirmation(requireNotNull(service.list(1).fingerprint), clock.instant())
+            assertEquals(3, service.deleteAll(1, snapshot))
+            assertTrue(service.list(1).reminders.isEmpty())
+            assertEquals(1, service.list(2).reminders.size)
+            reminders.reminders.values.filter { it.userId == 1L }.forEach {
+                assertEquals(ReminderStatus.DELETED, it.status)
+                assertNull(it.nextFireAt)
+                assertNull(it.snoozedUntil)
+                assertNull(it.pausedUntil)
+            }
+        }
+
+    @Test
+    fun `new reminder or edited target invalidates delete all without partial deletion`() =
+        runTest {
+            val root = series()
+            val snapshot = Confirmation(requireNotNull(service.list(1).fingerprint), clock.instant())
+            service.create(1, "Проверить почту", When(time = LocalTime.of(18, 0)), null)
+            assertEquals(ErrorCode.CONFIRMATION_STALE, assertThrows<DomainException> { service.deleteAll(1, snapshot) }.error)
+            assertEquals(2, service.list(1).reminders.size)
+            val current = Confirmation(requireNotNull(service.list(1).fingerprint), clock.instant())
+            service.update(1, root.id, "series", null, "Новое содержание", null, null)
+            assertEquals(ErrorCode.CONFIRMATION_STALE, assertThrows<DomainException> { service.deleteAll(1, current) }.error)
+            assertEquals(2, service.list(1).reminders.size)
+        }
+
+    @Test
+    fun `expired delete all leaves every target unchanged`() =
+        runTest {
+            series()
+            val snapshot = Confirmation(requireNotNull(service.list(1).fingerprint), clock.instant())
+            clock.now = clock.instant().plus(Duration.ofHours(1))
+            assertEquals(ErrorCode.CONFIRMATION_STALE, assertThrows<DomainException> { service.deleteAll(1, snapshot) }.error)
+            assertEquals(1, service.list(1).reminders.size)
+        }
+
     private val clock = MutableClock(Instant.parse("2026-11-02T07:15:00Z"))
     private val reminders = InMemoryReminderRepository()
     private val profiles = InMemoryUserRepository(user(), user(id = 2, chatId = 200))

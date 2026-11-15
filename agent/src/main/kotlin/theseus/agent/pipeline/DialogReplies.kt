@@ -21,6 +21,10 @@ class DialogReplies(
             "capabilities" to "reply.capabilities",
             "clarify" to "reply.clarify",
             "unsupported" to "reply.unsupported",
+            "unsupported_recurrence" to "reply.unsupported_recurrence",
+            "invalid_date" to "reply.error.invalid_date",
+            "choose_reminder" to "reply.choose_reminder",
+            "missing_time" to "reply.missing_time",
         )
 
     val definition =

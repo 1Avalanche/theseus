@@ -58,6 +58,58 @@ import java.util.UUID
 @Testcontainers(disabledWithoutDocker = true)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ReminderDomainIntegrationTest {
+    @Test
+    fun `confirmed delete all is atomic user scoped and replays original count after response loss`() =
+        runTest {
+            val user = activeUser()
+            val other = activeUser(200)
+            val root = series(user.id)
+            service.pause(user.id, root.id, null, null)
+            service.create(user.id, "Проверить почту", When(time = LocalTime.of(18, 0)), null)
+            series(other.id)
+            val preview = tools.call("list_reminders", user.id, args("{}"), null).body()
+            val confirmation =
+                buildJsonObject {
+                    put("fingerprint", preview.getValue("fingerprint"))
+                    put("created_at", clock.instant().toString())
+                }
+            val key = UUID.randomUUID().toString()
+            val first = tools.call("delete_reminder", user.id, args("""{"scope":"all"}"""), key, confirmation)
+            assertFalse(first.isError, first.json)
+            assertEquals(
+                "2",
+                first
+                    .body()
+                    .getValue("deleted_count")
+                    .jsonPrimitive.content,
+            )
+            assertTrue(service.list(user.id).reminders.isEmpty())
+            assertEquals(1, service.list(other.id).reminders.size)
+            clock.now = clock.now.plus(Duration.ofHours(2))
+            service.create(user.id, "Новое после удаления", When(time = LocalTime.of(18, 0)), null)
+            val replay = tools.call("delete_reminder", user.id, args("""{"scope":"all"}"""), key, confirmation)
+            assertEquals(first, replay)
+            assertEquals(1, service.list(user.id).reminders.size)
+            assertEquals(1, journalCount(UUID.fromString(key)))
+        }
+
+    @Test
+    fun `delete all snapshot changed by new reminder rolls back entire batch`() =
+        runTest {
+            val user = activeUser()
+            series(user.id)
+            val snapshot = requireNotNull(service.list(user.id).fingerprint)
+            service.create(user.id, "Проверить почту", When(time = LocalTime.of(18, 0)), null)
+            val confirmation =
+                buildJsonObject {
+                    put("fingerprint", snapshot)
+                    put("created_at", clock.instant().toString())
+                }
+            val result = tools.call("delete_reminder", user.id, args("""{"scope":"all"}"""), UUID.randomUUID().toString(), confirmation)
+            assertEquals("confirmation_stale", result.code())
+            assertEquals(2, service.list(user.id).reminders.size)
+        }
+
     private val postgres = PostgreSQLContainer("postgres:17-alpine")
     private val initialNow = Instant.parse("2026-11-02T07:15:00Z")
     private val clock = TestClock(initialNow)

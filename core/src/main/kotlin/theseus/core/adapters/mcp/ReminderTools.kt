@@ -26,6 +26,7 @@ import theseus.core.domain.LocalFormats
 import theseus.core.domain.reminder.After
 import theseus.core.domain.reminder.PartOfDay
 import theseus.core.domain.reminder.Recurrence
+import theseus.core.domain.reminder.Reminder
 import theseus.core.domain.reminder.When
 import theseus.core.domain.user.AccountException
 import theseus.core.texts.Texts
@@ -155,6 +156,13 @@ class ReminderTools(
     ): JsonObject {
         checkFields(args, setOf("reminder_id", "scope", "occurrence_local"))
         val scope = args.optionalString("scope")
+        if (scope == "all") {
+            if (args.keys != setOf("scope")) invalid()
+            return buildJsonObject {
+                put("status", "deleted_all")
+                put("deleted_count", reminders.deleteAll(user, confirmation))
+            }
+        }
         val local = args.moment("occurrence_local")
         if (scope == "occurrence" && local == null && confirmation != null) invalid()
         val reminder = reminders.delete(user, args.id(), scope, local, confirmation)
@@ -192,6 +200,8 @@ class ReminderTools(
         val list = reminders.list(user, args.date("from"), args.date("to"), args.bool("include_paused", true))
         return buildJsonObject {
             put("reminders", JsonArray(list.reminders.map(ReminderView::of)))
+            list.fingerprint?.let { put("fingerprint", it) }
+            put("unsupported_count", list.unsupportedCount)
             list.occurrences?.let { occurrences ->
                 put(
                     "occurrences",
@@ -246,26 +256,21 @@ class ReminderTools(
         reminders.atomic(user) {
             checkFields(args, setOf("reminder_id", "scope", "occurrence_local", "text", "when", "recurrence"))
             val old = reminders.get(user, args.id())
-            val patch = args.optionalObject("recurrence")
+            val at = args.optionalObject("when")?.let(::whenDomain)
+            val timePatch = timePatch(old, args, at)
+            val patch = args.optionalObject("recurrence") ?: timePatch
             patch?.let { checkFields(it, recurrenceFields) }
-            val repeated =
-                patch?.let {
-                    val base = if (old.recurrenceRule == null) emptyMap() else recurrenceJson(recurrenceOf(old)).toMutableMap()
-                    val merged = base.toMutableMap()
-                    if ("part_of_day" in patch && "time" !in patch) merged.remove("time")
-                    patch.forEach { (key, value) ->
-                        if (value == JsonNull) merged.remove(key) else merged[key] = value
-                    }
-                    recurrenceDomain(JsonObject(merged))
-                }
+            val repeated = patch?.let { mergeRecurrence(old, it) }
             val change =
                 reminders.update(
                     user,
                     args.id(),
                     args.optionalString("scope"),
-                    args.moment("occurrence_local"),
+                    args.optionalString("occurrence_local")?.let {
+                        if (it.length == DATE_LENGTH) parseDate(it).atTime(old.startLocal.toLocalTime()) else parseMoment(it)
+                    },
                     args.optionalString("text"),
-                    args.optionalObject("when")?.let(::whenDomain),
+                    at.takeUnless { timePatch != null },
                     repeated,
                     confirmation,
                 )
@@ -277,10 +282,33 @@ class ReminderTools(
             }
         }
 
+    private fun timePatch(
+        old: Reminder,
+        args: JsonObject,
+        at: When?,
+    ): JsonObject? {
+        if (old.recurrenceRule == null || args.optionalString("scope") != "series" || at == null) return null
+        if (at.date != null || at.after != null || "recurrence" in args) invalid()
+        if (at.time == null && at.partOfDay == null) invalid()
+        return args.objectValue("when")
+    }
+
+    private fun mergeRecurrence(
+        old: Reminder,
+        patch: JsonObject,
+    ): Recurrence {
+        val merged = if (old.recurrenceRule == null) mutableMapOf() else recurrenceJson(recurrenceOf(old)).toMutableMap()
+        if ("part_of_day" in patch && "time" !in patch) merged.remove("time")
+        patch.forEach { (key, value) ->
+            if (value == JsonNull) merged.remove(key) else merged[key] = value
+        }
+        return recurrenceDomain(JsonObject(merged))
+    }
+
     private fun whenDomain(value: JsonObject): When {
         val dto = json.decodeFromJsonElement<WhenDto>(value)
         return When(
-            date = dto.date?.let { LocalFormats.parseDate(it) ?: invalid() },
+            date = dto.date?.let(::parseDate),
             time = dto.time?.let { LocalFormats.parseTime(it) ?: invalid() },
             after = dto.after?.let { After(it.days, it.hours, it.minutes) },
             partOfDay = dto.partOfDay?.let(::partOfDay),
@@ -296,8 +324,8 @@ class ReminderTools(
             dto.byMonthDay,
             dto.byMonth,
             dto.time?.let { LocalFormats.parseTime(it) ?: invalid() },
-            dto.startDate?.let { LocalFormats.parseDate(it) ?: invalid() },
-            dto.until?.let { LocalFormats.parseDate(it) ?: invalid() },
+            dto.startDate?.let(::parseDate),
+            dto.until?.let(::parseDate),
             dto.count,
             dto.partOfDay?.let(::partOfDay),
         )
@@ -356,9 +384,16 @@ class ReminderTools(
             ?.longOrNull
             ?.takeIf { it > 0 } ?: invalid()
 
-    private fun JsonObject.date(key: String) = optionalString(key)?.let { LocalFormats.parseDate(it) ?: invalid() }
+    private fun parseDate(value: String) = LocalFormats.parseDate(value) ?: throw DomainException(ErrorCode.INVALID_DATE)
 
-    private fun JsonObject.moment(key: String): LocalDateTime? = optionalString(key)?.let { LocalFormats.parseMoment(it) ?: invalid() }
+    private fun parseMoment(value: String): LocalDateTime {
+        parseDate(value.substringBefore('T'))
+        return LocalFormats.parseMoment(value) ?: invalid()
+    }
+
+    private fun JsonObject.date(key: String) = optionalString(key)?.let(::parseDate)
+
+    private fun JsonObject.moment(key: String): LocalDateTime? = optionalString(key)?.let(::parseMoment)
 
     private fun invalid(): Nothing = throw DomainException(ErrorCode.INVALID_ARGUMENTS)
 
@@ -377,6 +412,7 @@ class ReminderTools(
                 "count",
             )
         private const val SUCCESS = 200
+        private const val DATE_LENGTH = 10
         val names =
             listOf(
                 "create_reminder",

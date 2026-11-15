@@ -1,6 +1,7 @@
 package theseus.agent.pipeline
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -28,6 +29,7 @@ data class ReminderExecution(
 )
 
 /** Перехват критичных действий до MCP. Модель не может передать метаданные подтверждения или разрешить force. */
+@Suppress("TooManyFunctions") // Подготовка, подтверждение и восстановление трёх видов карточек, включая массовое удаление.
 class ReminderActions(
     private val core: CoreClient,
     private val store: AgentStore,
@@ -44,7 +46,9 @@ class ReminderActions(
     ): ReminderExecution {
         val args = JsonObject(input - "force")
         val prepared =
-            if (name == "delete_reminder" || (name == "update_reminder" && args["recurrence"] is JsonObject)) {
+            if (name == "delete_reminder" && args.value("scope") == "all") {
+                deleteAll(user, args, eventKey)
+            } else if (needsSnapshot(name, args)) {
                 critical(user, name, args, eventKey)
             } else {
                 null
@@ -63,6 +67,34 @@ class ReminderActions(
         }
     }
 
+    private fun needsSnapshot(
+        name: String,
+        args: JsonObject,
+    ): Boolean =
+        when (name) {
+            "delete_reminder" -> true
+            "update_reminder" -> args["recurrence"] is JsonObject || "when" in args
+            else -> false
+        }
+
+    private suspend fun deleteAll(
+        user: CoreUser,
+        args: JsonObject,
+        eventKey: String,
+    ): ReminderExecution {
+        if (args.keys != setOf("scope")) return error()
+        val result = core.callTool(user.id, "list_reminders", buildJsonObject { put("include_paused", true) })
+        if (result.isError) return ReminderExecution(result)
+        val card = Json.parseToJsonElement(result.text).jsonObject
+        if (card.value("unsupported_count").toIntOrNull()?.let { it > 0 } == true) {
+            return ReminderExecution(null, BotReply(texts.get("reply.error.unsupported_state")))
+        }
+        val rows = card["reminders"] as? JsonArray ?: return error()
+        if (rows.isEmpty()) return ReminderExecution(null, BotReply(texts.get("reminders.empty")))
+        if (card["fingerprint"] !is JsonPrimitive) return error()
+        return ReminderExecution(null, propose(user, "delete_reminder", args, card, eventKey))
+    }
+
     @Suppress("ReturnCount") // Ранние проверки не допускают неподтверждённое критичное действие в основной путь.
     private suspend fun critical(
         user: CoreUser,
@@ -76,6 +108,7 @@ class ReminderActions(
         val card = Json.parseToJsonElement(target.text).jsonObject
         val reset =
             name == "update_reminder" &&
+                args.value("scope") != "occurrence" &&
                 (card.value("excluded_count") != "0" || card.value("pending_children_count") != "0")
         if (reset) {
             val attempted = operations.perform(eventKey, user.id, name, args)
@@ -164,12 +197,23 @@ class ReminderActions(
             ),
             listOf(
                 listOf(
-                    Button(texts.get("confirmation.accept"), "rem:yes:${stored.id}"),
+                    Button(texts.get(acceptKey(saved.value("name"), saved.getValue("arguments").jsonObject)), "rem:yes:${stored.id}"),
                     Button(texts.get("confirmation.cancel"), "rem:no:${stored.id}"),
                 ),
             ),
         )
     }
+
+    private fun acceptKey(
+        name: String,
+        args: JsonObject,
+    ): String =
+        when {
+            name == "create_reminder" -> "confirmation.create_anyway"
+            name == "delete_reminder" && args.value("scope") == "all" -> "confirmation.delete_all_button"
+            name == "delete_reminder" -> "confirmation.delete_button"
+            else -> "confirmation.accept"
+        }
 
     @Suppress("ReturnCount", "CyclomaticComplexMethod") // Проверки владельца, ключа и неопределённого исхода выполняются до действия.
     suspend fun callback(

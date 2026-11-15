@@ -6,6 +6,17 @@
     "gender": "female"
   },
   "fixtures": {
+    "water": {
+      "reminders": [
+        {"id": 21, "text": "Пить воду", "status": "active", "recurrence": {"freq": "daily", "time": "18:45", "start_date": "2026-11-01"}}
+      ]
+    },
+    "water_duplicates": {
+      "reminders": [
+        {"id": 21, "text": "Пить воду", "status": "active", "recurrence": {"freq": "daily", "time": "18:45", "start_date": "2026-11-01"}},
+        {"id": 22, "text": "Пить воду", "status": "active", "recurrence": {"freq": "daily", "time": "18:45", "start_date": "2026-11-01"}}
+      ]
+    },
     "empty": {
       "reminders": []
     },

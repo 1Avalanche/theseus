@@ -3,21 +3,22 @@
   "properties": {
     "reminder_id": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "description": "Обязателен для одной цели; при scope=all отсутствует."
     },
     "scope": {
       "type": "string",
+      "description": "series — вся серия; occurrence — одно срабатывание; all — все текущие напоминания пользователя без reminder_id. Для разового scope отсутствует.",
       "enum": [
         "series",
-        "occurrence"
+        "occurrence",
+        "all"
       ]
     },
     "occurrence_local": {
       "type": "string"
     }
   },
-  "required": [
-    "reminder_id"
-  ],
+  "required": [],
   "additionalProperties": false
 }
