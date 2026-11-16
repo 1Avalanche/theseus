@@ -76,7 +76,7 @@ class ReminderActionsTest {
                     .getValue("fingerprint")
                     .jsonPrimitive.content,
             )
-            assertEquals(result, actions.callback(callback(card, true, "callback:replay"), owner))
+            assertEquals(texts.get("confirmation.processed"), actions.callback(callback(card, true, "callback:replay"), owner)!!.text)
             assertEquals(1, core.mutations.size)
         }
 
@@ -128,6 +128,7 @@ class ReminderActionsTest {
             id,
             owner.chatId,
             callback = card.buttons.single()[if (accept) 0 else 1].data,
+            callbackMessageId = 123,
         )
 
     @Test
@@ -178,6 +179,32 @@ class ReminderActionsTest {
             )
             assertTrue(core.mutations.isEmpty())
             assertEquals(0, core.domainWrites)
+        }
+
+    @Test
+    fun `cancel after successful delete reports processed card and clears keyboard`() =
+        runTest {
+            val card = deleteCard()
+            val deleted = requireNotNull(actions.callback(callback(card, true), owner))
+            assertTrue(deleted.text.contains("Удалил"))
+            assertEquals(123L, deleted.clearKeyboardMessageId)
+            val repeated = requireNotNull(actions.callback(callback(card, false, "callback:2"), owner))
+            assertEquals(texts.get("confirmation.processed"), repeated.text)
+            assertEquals(123L, repeated.clearKeyboardMessageId)
+            assertEquals(1, core.domainWrites)
+            assertEquals(1, core.mutations.size)
+        }
+
+    @Test
+    fun `confirm after cancellation reports processed card without mutation`() =
+        runTest {
+            val card = deleteCard()
+            val cancelled = requireNotNull(actions.callback(callback(card, false), owner))
+            assertEquals(texts.get("confirmation.cancelled"), cancelled.text)
+            assertEquals(123L, cancelled.clearKeyboardMessageId)
+            val repeated = requireNotNull(actions.callback(callback(card, true, "callback:2"), owner))
+            assertEquals(texts.get("confirmation.processed"), repeated.text)
+            assertTrue(core.mutations.isEmpty())
         }
 
     @Test
@@ -294,15 +321,15 @@ class ReminderActionsTest {
         }
 
     @Test
-    fun `confirmed card replay after ttl returns original response without new mutation`() =
+    fun `confirmed card replay after ttl reports processed without new mutation`() =
         runTest {
             val card = deleteCard()
-            val first = requireNotNull(actions.callback(callback(card, true), owner))
+            assertTrue(requireNotNull(actions.callback(callback(card, true), owner)).text.contains("Удалил"))
             clock.now = clock.now.plus(Duration.ofHours(2))
 
             val replay = requireNotNull(actions.callback(callback(card, true, "callback:later"), owner))
 
-            assertEquals(first.text, replay.text)
+            assertEquals(texts.get("confirmation.processed"), replay.text)
             assertEquals(1, core.mutations.size)
             assertEquals(1, core.domainWrites)
         }
@@ -316,7 +343,7 @@ class ReminderActionsTest {
             val repeated = requireNotNull(actions.callback(callback(card, true, "callback:later"), owner))
 
             assertEquals(texts.get("confirmation.cancelled"), cancelled.text)
-            assertEquals(cancelled.text, repeated.text)
+            assertEquals(texts.get("confirmation.processed"), repeated.text)
             assertTrue(core.mutations.isEmpty())
         }
 

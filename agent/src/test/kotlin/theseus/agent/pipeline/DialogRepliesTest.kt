@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import theseus.agent.core.CoreUser
 import theseus.agent.texts.Texts
 
 class DialogRepliesTest {
@@ -18,8 +17,12 @@ class DialogRepliesTest {
             "invalid_date" to "reply.error.invalid_date",
             "choose_reminder" to "reply.choose_reminder",
             "missing_time" to "reply.missing_time",
+            "missing_text" to "reply.missing_text",
+            "invalid_time" to "reply.error.invalid_time",
+            "time_in_past" to "reply.error.time_in_past",
+            "unclassified" to "reply.unclassified",
         )) {
-            val result = replies.execute(user, Json.parseToJsonElement("""{"topic":"$topic"}""").jsonObject)
+            val result = replies.execute(Json.parseToJsonElement("""{"topic":"$topic"}""").jsonObject)
             assertFalse(result.isError)
             assertEquals(texts.get(key), result.text)
             assertFalse(result.text.contains("Календарь"))
@@ -28,34 +31,46 @@ class DialogRepliesTest {
 
     private val texts = Texts.load("texts/agent.properties")
     private val replies = DialogReplies(texts)
-    private val user = CoreUser(7, 4242, "active", "Настя", "female", "Asia/Yekaterinburg")
 
     @Test
     fun `start is repeatable and independent of bot username or start payload`() {
-        val expected = texts.get("reply.welcome_named", mapOf("name" to "Настя"))
+        val expected = texts.get("reply.greeting")
         for (command in listOf("/start", "/start", "/start@theseus_test", "/start@theseus_prod", "/start payload")) {
-            assertEquals(expected, replies.commandReply(command, user))
+            assertEquals(expected, replies.commandReply(command))
         }
-        assertNull(replies.commandReply("/starter", user))
-        assertNull(replies.commandReply("кто ты", user))
+        assertNull(replies.commandReply("/starter"))
+        assertNull(replies.commandReply("кто ты"))
     }
 
     @Test
     fun `help describes only available functionality`() {
-        assertEquals(texts.get("reply.capabilities"), replies.commandReply("/help", user))
-        assertEquals(texts.get("reply.capabilities"), replies.commandReply("/help@theseus_prod", user))
+        assertEquals(texts.get("reply.capabilities"), replies.commandReply("/help"))
+        assertEquals(texts.get("reply.capabilities"), replies.commandReply("/help@theseus_prod"))
     }
 
     @Test
-    fun `missing profile name does not leak placeholder or infer name`() {
-        for (name in listOf(null, "", " ")) {
-            assertEquals(texts.get("reply.welcome"), replies.commandReply("/start", user.copy(name = name)))
+    fun `greeting never repeats onboarding presentation`() {
+        val result = replies.execute(Json.parseToJsonElement("""{"topic":"greeting"}""").jsonObject)
+        assertEquals("Привет. Что нужно сделать?", result.text)
+        assertFalse(result.text.contains(texts.get("reply.welcome")))
+    }
+
+    @Test
+    fun `introduction has fixed identity one approved variant and current capabilities`() {
+        for (index in 0 until 6) {
+            val reply = DialogReplies(texts) { index }.execute(Json.parseToJsonElement("""{"topic":"introduction"}""").jsonObject)
+            assertEquals(
+                listOf(texts.get("reply.about"), texts.get("reply.about.variant.${index + 1}"), texts.get("reply.capabilities"))
+                    .joinToString("\n\n"),
+                reply.text,
+            )
+            assertTrue(reply.text.contains("Сейчас могу:"))
         }
     }
 
     @Test
     fun `model selects approved topic without supplying user facing text`() {
-        val result = replies.execute(user, Json.parseToJsonElement("""{"topic":"about"}""").jsonObject)
+        val result = replies.execute(Json.parseToJsonElement("""{"topic":"about"}""").jsonObject)
 
         assertFalse(result.isError)
         assertEquals(texts.get("reply.about"), result.text)
@@ -74,7 +89,7 @@ class DialogRepliesTest {
                 """{"topic":"greeting","name":"Чужое имя"}""",
             )
         for (arguments in invalid) {
-            val result = replies.execute(user, Json.parseToJsonElement(arguments).jsonObject)
+            val result = replies.execute(Json.parseToJsonElement(arguments).jsonObject)
             assertTrue(result.isError, arguments)
             assertEquals(texts.get("tool.invalid_dialogue"), result.text)
         }
@@ -82,7 +97,7 @@ class DialogRepliesTest {
 
     @Test
     fun `clarification asks for missing part without discarding dialogue context`() {
-        val result = replies.execute(user, Json.parseToJsonElement("""{"topic":"clarify"}""").jsonObject)
+        val result = replies.execute(Json.parseToJsonElement("""{"topic":"clarify"}""").jsonObject)
 
         assertFalse(result.isError)
         assertEquals(texts.get("reply.clarify"), result.text)

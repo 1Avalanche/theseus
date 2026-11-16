@@ -474,7 +474,7 @@ class MessageHandlerTest {
             val core = FakeCore(mapOf(4242L to owner))
             val llm = FakeLlm()
 
-            assertEquals(texts.get("reply.welcome_named", mapOf("name" to "Аня")), handler(core, llm).handle(4242, "/start"))
+            assertEquals(texts.get("reply.greeting"), handler(core, llm).handle(4242, "/start"))
             assertTrue(llm.requests.isEmpty())
             assertTrue(core.calls.isEmpty())
         }
@@ -508,7 +508,7 @@ class MessageHandlerTest {
                     .messages
                     .first()
                     .content!!
-                    .contains("половину мозга"),
+                    .contains("Сири Китон"),
             )
             assertEquals(
                 "кто ты",
@@ -518,6 +518,31 @@ class MessageHandlerTest {
                     .last()
                     .content,
             )
+        }
+
+    @Test
+    fun `surname followup includes prior self introduction in isolated persona request`() =
+        runTest {
+            val store = FakeDialogs()
+            val core = FakeCore(mapOf(4242L to owner))
+            val about = ChatMessage(Role.ASSISTANT, null, listOf(ToolCall("about", "assistant_reply", """{"topic":"about"}""")))
+            val llm =
+                FakeLlm(
+                    about,
+                    ChatMessage(Role.ASSISTANT, "Меня зовут Сири Китон."),
+                    about,
+                    ChatMessage(Role.ASSISTANT, "Не знаю, откуда фамилия Китон."),
+                )
+            val handler = MessageHandler(core, llm, PromptBuilder.fromResources(texts), ReplyRenderer(texts), texts, clock, dialogs = store)
+            assertEquals("Меня зовут Сири Китон.", handler.handle(4242, "как тебя зовут?", "name"))
+            assertEquals("Не знаю, откуда фамилия Китон.", handler.handle(4242, "а почему такая фамилия?", "surname"))
+            val request = llm.requests.last()
+            assertTrue(request.tools.isEmpty())
+            assertEquals(
+                listOf("как тебя зовут?", "Меня зовут Сири Китон.", "а почему такая фамилия?"),
+                request.messages.drop(1).map { it.content },
+            )
+            assertTrue(core.calls.isEmpty())
         }
 
     @Test
@@ -552,7 +577,7 @@ class MessageHandlerTest {
                     ChatMessage(Role.ASSISTANT, "Готово, всё создано."),
                 )
 
-            assertEquals(texts.get("reply.unconfirmed"), handler(core, llm).handle(4242, "кто ты"))
+            assertEquals(texts.get("reply.unclassified"), handler(core, llm).handle(4242, "кто ты"))
             assertTrue(core.calls.isEmpty())
         }
 
@@ -575,20 +600,69 @@ class MessageHandlerTest {
         }
 
     @Test
-    fun `tool error goes back to llm but text alone does not confirm creation`() =
+    fun `past time gets specific resource reply without model retry`() =
         runTest {
             val error = """{"error":{"code":"time_in_past","message":"Время уже прошло"}}"""
             val core = FakeCore(mapOf(4242L to owner), ToolResult(error, isError = true))
+            val llm = FakeLlm(toolCall("""{"text":"X","when":{"time":"09:00"}}"""))
+            assertEquals(texts.get("reply.error.time_in_past"), handler(core, llm).handle(4242, "напомни в 9 про X"))
+            assertEquals(1, llm.requests.size)
+            assertEquals(1, core.calls.size)
+        }
+
+    @Test
+    fun `unclassified sentence gets requested clarification without technical failure`() =
+        runTest {
+            val core = FakeCore(mapOf(4242L to owner))
+            val llm = FakeLlm(ChatMessage(Role.ASSISTANT, "Не понял"))
+            assertEquals(texts.get("reply.unclassified"), handler(core, llm).handle(4242, "а почему такая фамилия?"))
+            assertTrue(core.calls.isEmpty())
+        }
+
+    @Test
+    fun `unclassified response after read only search does not claim uncertain mutation`() =
+        runTest {
+            val core = FakeCore(mapOf(4242L to owner), ToolResult("""{"candidates":[]}""", false))
             val llm =
-                FakeLlm(toolCall("""{"text":"X","when":{"time":"09:00"}}"""), ChatMessage(Role.ASSISTANT, "Это время уже прошло. Завтра?"))
+                FakeLlm(
+                    ChatMessage(Role.ASSISTANT, null, listOf(ToolCall("find", "find_reminders", """{"query":"билеты"}"""))),
+                    ChatMessage(Role.ASSISTANT, "Не разобрал задачу"),
+                )
+            assertEquals(texts.get("reply.unclassified"), handler(core, llm).handle(4242, "про билеты"))
+            assertEquals(listOf("find_reminders"), core.calls.map { it.second })
+        }
 
-            val reply = handler(core, llm).handle(4242, "напомни в 9 про X")
+    @Test
+    fun `invalid dialogue json or topic gets clarification without retry or technical failure`() =
+        runTest {
+            for (arguments in listOf("{не json", """{"topic":"unknown"}""")) {
+                val core = FakeCore(mapOf(4242L to owner))
+                val llm = FakeLlm(ChatMessage(Role.ASSISTANT, null, listOf(ToolCall("dialog", "assistant_reply", arguments))))
+                assertEquals(texts.get("reply.unclassified"), handler(core, llm).handle(4242, "про фамилию"))
+                assertEquals(1, llm.requests.size)
+                assertTrue(core.calls.isEmpty())
+            }
+        }
 
-            assertEquals(texts.get("reply.unconfirmed"), reply)
-            val second = llm.requests[1].messages
-            assertEquals(listOf(Role.SYSTEM, Role.USER, Role.ASSISTANT, Role.TOOL), second.map { it.role })
-            assertEquals(error, second.last().content)
-            assertEquals("call_1", second.last().toolCallId)
+    @Test
+    fun `contradictory time uses specific clarification without mutation`() =
+        runTest {
+            val core = FakeCore(mapOf(4242L to owner))
+            val llm =
+                FakeLlm(ChatMessage(Role.ASSISTANT, null, listOf(ToolCall("time", "assistant_reply", """{"topic":"invalid_time"}"""))))
+            assertEquals(texts.get("reply.error.invalid_time"), handler(core, llm).handle(4242, "перенеси на 15 вечера"))
+            assertTrue(core.calls.isEmpty())
+        }
+
+    @Test
+    fun `invalid time from core is rendered directly without general clarification`() =
+        runTest {
+            for (code in listOf("invalid_time", "invalid_when", "invalid_recurrence")) {
+                val core = FakeCore(mapOf(4242L to owner), ToolResult("""{"error":{"code":"$code"}}""", true))
+                val llm = FakeLlm(toolCall("""{"text":"X","when":{"time":"25:00"}}"""))
+                assertEquals(texts.get("reply.error.$code"), handler(core, llm).handle(4242, "напомни"))
+                assertEquals(1, llm.requests.size)
+            }
         }
 
     @Test

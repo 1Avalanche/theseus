@@ -371,7 +371,18 @@ class ReplyRenderer(
     companion object {
         private const val MAX_DUPLICATES_SHOWN = 2
         private const val MAX_CHOICES_SHOWN = 5
-        private val USER_ERRORS = setOf("invalid_date", "not_found", "occurrence_not_found", "not_recurring", "unsupported_state")
+        private val USER_ERRORS =
+            setOf(
+                "invalid_date",
+                "invalid_time",
+                "invalid_when",
+                "time_in_past",
+                "invalid_recurrence",
+                "not_found",
+                "occurrence_not_found",
+                "not_recurring",
+                "unsupported_state",
+            )
         private val RU: Locale = Locale.of("ru")
         private val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
         private val DAY_MONTH: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMMM", RU)

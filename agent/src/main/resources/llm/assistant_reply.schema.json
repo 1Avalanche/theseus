@@ -3,10 +3,27 @@
   "properties": {
     "topic": {
       "type": "string",
-      "enum": ["greeting", "about", "capabilities", "clarify", "unsupported", "unsupported_recurrence", "invalid_date", "choose_reminder", "missing_time"],
-      "description": "clarify — нет содержания; unsupported — нет функции; unsupported_recurrence — чаще раза в день; invalid_date — неверная дата; choose_reminder — неоднозначность; missing_time — нет часа."
+      "enum": [
+        "greeting",
+        "about",
+        "capabilities",
+        "clarify",
+        "unsupported",
+        "unsupported_recurrence",
+        "invalid_date",
+        "choose_reminder",
+        "missing_time",
+        "introduction",
+        "unclassified",
+        "invalid_time",
+        "time_in_past",
+        "missing_text"
+      ],
+      "description": "introduction — общий рассказ; about — конкретно о себе/фамилии; unclassified — нет задачи; invalid_time — неверный час или «15 вечера»."
     }
   },
-  "required": ["topic"],
+  "required": [
+    "topic"
+  ],
   "additionalProperties": false
 }

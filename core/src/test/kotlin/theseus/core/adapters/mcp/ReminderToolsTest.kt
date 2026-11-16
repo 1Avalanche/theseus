@@ -24,6 +24,29 @@ import java.time.LocalTime
 
 class ReminderToolsTest {
     @Test
+    fun `invalid clock time is specific for one time recurrence and occurrence and preserves target`() =
+        runTest {
+            for (time in listOf("25:00", "15:75", "15 вечера")) {
+                assertEquals("invalid_time", errorCode(tools.createReminder(1, args("""{"text":"X","when":{"time":"$time"}}"""))))
+                assertEquals(
+                    "invalid_time",
+                    errorCode(tools.createReminder(1, args("""{"text":"X","recurrence":{"freq":"daily","time":"$time"}}"""))),
+                )
+            }
+            tools.createReminder(1, args("""{"text":"Билеты","recurrence":{"freq":"daily","time":"20:00"}}"""))
+            assertEquals("invalid_time", errorCode(change("""{"reminder_id":1,"scope":"series","recurrence":{"time":"25:00"}}""")))
+            assertEquals(
+                "invalid_time",
+                errorCode(
+                    change("""{"reminder_id":1,"scope":"occurrence","occurrence_local":"2026-11-03T25:00","when":{"time":"21:00"}}"""),
+                ),
+            )
+            val unchanged = tools.call("get_reminder", 1, args("""{"reminder_id":1}"""), null)
+            assertTrue(unchanged.json.contains("20:00"), unchanged.json)
+            assertFalse(unchanged.json.contains("21:00"), unchanged.json)
+        }
+
+    @Test
     fun `time only when updates series without losing calendar`() =
         runTest {
             tools.createReminder(1, args("""{"text":"Пить воду","recurrence":{"freq":"weekly","by_weekday":["MO","FR"],"time":"18:45"}}"""))

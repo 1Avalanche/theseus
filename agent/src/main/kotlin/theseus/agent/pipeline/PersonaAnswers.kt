@@ -17,7 +17,7 @@ internal class PersonaAnswers(
     fun render(message: ChatMessage): String {
         val text = message.content?.trim()
         return when {
-            text.isNullOrBlank() || message.toolCalls.isNotEmpty() -> texts.get("reply.about")
+            text.isNullOrBlank() || message.toolCalls.isNotEmpty() -> texts.get("reply.persona_unknown")
             sourceTerms.any { text.contains(it, ignoreCase = true) } -> texts.get("reply.persona_unknown")
             else -> text
         }
