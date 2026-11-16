@@ -113,17 +113,19 @@ class MessageHandlerTest {
         """{"status":"created","reminder":{"id":1,"text":"Выключить духовку","kind":"one_time","status":"active",""" +
             """"schedule":{"at_local":"2026-11-02T10:20"},"next_at_local":"2026-11-02T10:20"},"warnings":[]}"""
 
-    private class FakeCore(
+    internal class FakeCore(
         val users: Map<Long, CoreUser>,
         var result: ToolResult = ToolResult("{}", isError = false),
     ) : CoreClient {
         val calls = mutableListOf<Triple<Long, String, JsonObject>>()
         val results = ArrayDeque<ToolResult>()
         var delayMs = 0L
+        val confirmations = mutableListOf<JsonObject>()
+        var specifications = listOf(ToolSpec("create_reminder", "Создать напоминание", JsonObject(emptyMap())))
 
         override suspend fun findUserByChat(chatId: Long) = users[chatId]
 
-        override suspend fun listTools() = listOf(ToolSpec("create_reminder", "Создать напоминание", JsonObject(emptyMap())))
+        override suspend fun listTools() = specifications
 
         override suspend fun callTool(
             userId: Long,
@@ -131,7 +133,10 @@ class MessageHandlerTest {
             arguments: JsonObject,
             operationId: java.util.UUID,
             confirmation: JsonObject?,
-        ): ToolResult = callTool(userId, name, arguments)
+        ): ToolResult {
+            confirmation?.let(confirmations::add)
+            return callTool(userId, name, arguments)
+        }
 
         override suspend fun callTool(
             userId: Long,
@@ -144,7 +149,7 @@ class MessageHandlerTest {
         }
     }
 
-    private class FakeLlm(
+    internal class FakeLlm(
         vararg answers: ChatMessage,
     ) : LlmClient {
         private val queue = ArrayDeque(answers.toList())
@@ -306,7 +311,7 @@ class MessageHandlerTest {
                                 (1..5).map { id ->
                                     kotlinx.serialization.json.buildJsonObject {
                                         put("id", kotlinx.serialization.json.JsonPrimitive(id))
-                                        put("text", kotlinx.serialization.json.JsonPrimitive("Б".repeat(800)))
+                                        put("text", kotlinx.serialization.json.JsonPrimitive("Б".repeat(800) + id))
                                     }
                                 },
                             ),

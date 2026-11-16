@@ -20,7 +20,8 @@ internal class TurnBudget {
         request: LlmRequest,
         contextLimit: Int = 16000,
     ) {
-        if (requests >= MAX_REQUESTS || !ContextBudget.fits(request, contextLimit)) throw BudgetExceeded()
+        if (requests >= MAX_REQUESTS) throw BudgetExceeded(StopReason.REQUESTS)
+        if (!ContextBudget.fits(request, contextLimit)) throw BudgetExceeded(StopReason.CONTEXT)
         requests++
     }
 
@@ -28,9 +29,15 @@ internal class TurnBudget {
         tools: List<ToolCall>,
         maxRounds: Int,
     ) {
-        if (rounds >= minOf(maxRounds, MAX_ROUNDS) || calls + tools.size > MAX_TOOLS) throw BudgetExceeded()
+        val exceeded =
+            when {
+                rounds >= minOf(maxRounds, MAX_ROUNDS) -> StopReason.TOOL_ROUNDS
+                calls + tools.size > MAX_TOOLS -> StopReason.TOOL_CALLS
+                else -> null
+            }
+        if (exceeded != null) throw BudgetExceeded(exceeded)
         val signatures = tools.map { it.name + canonical(runCatching { Json.parseToJsonElement(it.argumentsJson) }.getOrNull()) }
-        if (signatures.distinct().size != signatures.size || signatures.any { it in seen }) throw BudgetExceeded()
+        if (signatures.distinct().size != signatures.size || signatures.any { it in seen }) throw BudgetExceeded(StopReason.REPEATED_TOOL)
         seen += signatures
         calls += tools.size
         rounds++
@@ -51,7 +58,11 @@ internal class TurnBudget {
     }
 }
 
-internal class BudgetExceeded : RuntimeException()
+internal enum class StopReason { REQUESTS, CONTEXT, TOOL_ROUNDS, TOOL_CALLS, REPEATED_TOOL, MIXED_PERSONA }
+
+internal class BudgetExceeded(
+    val reason: StopReason,
+) : RuntimeException(reason.name)
 
 internal class SummaryUnavailable(
     cause: Throwable,

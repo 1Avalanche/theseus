@@ -58,6 +58,7 @@ class MessageHandler(
     private val log = LoggerFactory.getLogger(MessageHandler::class.java)
     private val toolsLock = Mutex()
     private val dialogue = DialogReplies(texts)
+    private val persona = PersonaAnswers(texts)
     private var tools: List<ToolDefinition>? = null
     private val memory = dialogs?.let { ConversationMemory(it, texts) }
 
@@ -79,6 +80,7 @@ class MessageHandler(
             withTimeout(TurnBudget.TIMEOUT_MS) { handleWithinBudget(chatId, text, eventId, replyMessageId, budget) }
         } catch (e: TimeoutCancellationException) {
             if (budget.mutationStarted) throw theseus.agent.system.UncertainMcpException(e)
+            log.info("Обработка остановлена: reason=deadline")
             BotReply(texts.get("reply.budget"))
         }
     }
@@ -121,9 +123,11 @@ class MessageHandler(
         val reply =
             try {
                 conversation(user, text, eventId, replyMessageId, session, budget, now)
-            } catch (_: BudgetExceeded) {
+            } catch (e: BudgetExceeded) {
+                log.info("Обработка остановлена: reason={}, user_id={}", e.reason, user.id)
                 BotReply(texts.get("reply.budget"))
             } catch (_: theseus.agent.llm.LlmBudgetException) {
+                log.info("Обработка остановлена: reason=model_context, user_id={}", user.id)
                 BotReply(texts.get("reply.budget"))
             }
         if (session != null) dialogs.append(session.id, user.id, eventId, Role.ASSISTANT, reply.text, clock.instant())
@@ -155,17 +159,33 @@ class MessageHandler(
         }
         var currentText = text
         replyMessageId?.let { id ->
-            val delivery = systemCore?.request("GET", "/deliveries/by-message?user_id=${user.id}&message_id=$id", null, null)
-            if (delivery?.successful == true) {
-                currentText = texts.get("context.reply", mapOf("delivery" to delivery.body.toString())) + "\n\n" + text
-            }
+            replyContext(user, id)?.let { context -> currentText = "$context\n\n$text" }
         }
         messages += ChatMessage(Role.USER, currentText)
+        val rawResults = mutableMapOf<String, String>()
         repeat(maxToolRounds + 1) {
-            round(user, messages, zone, now, "$eventId:usage:$it", budget, session, text)?.let { return it }
+            round(user, messages, zone, now, "$eventId:usage:$it", budget, session, text, rawResults)?.let { return it }
         }
         log.warn("Превышено число раундов инструментов, user_id={}", user.id)
         return BotReply(texts.get("reply.budget"))
+    }
+
+    private suspend fun replyContext(
+        user: CoreUser,
+        messageId: Long,
+    ): String? {
+        val target = dialogs?.replyTarget(user.id, messageId, clock.instant())
+        if (target != null) {
+            val data =
+                kotlinx.serialization.json.buildJsonObject {
+                    put("reminder_id", kotlinx.serialization.json.JsonPrimitive(target.reminderId))
+                    put("kind", kotlinx.serialization.json.JsonPrimitive(target.kind))
+                    put("timezone", kotlinx.serialization.json.JsonPrimitive(target.timezone))
+                }
+            return texts.get("context.reply_message", mapOf("target" to data.toString()))
+        }
+        val delivery = systemCore?.request("GET", "/deliveries/by-message?user_id=${user.id}&message_id=$messageId", null, null)
+        return if (delivery?.successful == true) texts.get("context.reply", mapOf("delivery" to delivery.body.toString())) else null
     }
 
     private suspend fun complete(
@@ -217,6 +237,7 @@ class MessageHandler(
         budget: TurnBudget,
         session: theseus.agent.dialog.DialogSession?,
         question: String,
+        rawResults: MutableMap<String, String>,
     ): BotReply? {
         fitHistory(messages)
         val response = complete(user, LlmRequest(messages.toList(), tools()), usageKey, budget)
@@ -226,12 +247,29 @@ class MessageHandler(
             log.info("Ответ модели без вызова инструмента, user_id={}", user.id)
             return BotReply(texts.get(if (messages.any { it.role == Role.TOOL }) "reply.unconfirmed" else "reply.not_created"))
         }
+        return toolRound(user, messages, zone, now, usageKey, budget, session, question, rawResults, response.message)
+    }
+
+    private suspend fun toolRound(
+        user: CoreUser,
+        messages: MutableList<ChatMessage>,
+        zone: ZoneId,
+        now: Instant,
+        usageKey: String,
+        budget: TurnBudget,
+        session: theseus.agent.dialog.DialogSession?,
+        question: String,
+        rawResults: MutableMap<String, String>,
+        message: ChatMessage,
+    ): BotReply? {
+        val calls = message.toolCalls
         budget.tools(calls, maxToolRounds)
         // Генерация о себе требует отдельного обращения; смешанный ответ не должен терять уже исполненное изменение.
-        if (calls.size > 1 && calls.any(::isAbout)) throw BudgetExceeded()
-        messages += response.message
+        if (calls.size > 1 && calls.any(::isAbout)) throw BudgetExceeded(StopReason.MIXED_PERSONA)
+        messages += message
         val targetChanges = calls.filter { it.name in TARGET_CHANGES }
-        val candidates = messages.lastOrNull { it.role == Role.TOOL && it.content?.contains("\"candidates\"") == true }?.content
+        val candidates = candidateResult(messages, rawResults)
+        if (ToolResultContext.incompleteSelection(rawResults.values, calls)) return BotReply(texts.get("reply.search_truncated"))
         val results =
             if (targetChanges.size > 1) {
                 listOf(calls.first() to ReminderExecution(null, BotReply(renderer.choices(candidates, zone, now))))
@@ -266,10 +304,20 @@ class MessageHandler(
             )
         } else {
             results.forEach { (call, result) ->
-                messages += ChatMessage(Role.TOOL, requireNotNull(result.result).text, toolCallId = call.id)
+                val raw = requireNotNull(result.result).text
+                rawResults[call.id] = raw
+                messages += ChatMessage(Role.TOOL, ToolResultContext.compact(call.name, raw), toolCallId = call.id)
             }
             null
         }
+    }
+
+    private fun candidateResult(
+        messages: List<ChatMessage>,
+        rawResults: Map<String, String>,
+    ): String? {
+        val candidate = messages.lastOrNull { it.role == Role.TOOL && it.content?.contains("\"candidates\"") == true }
+        return candidate?.toolCallId?.let(rawResults::get) ?: candidate?.content
     }
 
     /** Старую текстовую историю можно убрать; текущий ввод, reply и цепочки инструментов сохраняются целиком. */
@@ -321,12 +369,7 @@ class MessageHandler(
                 "$key:persona",
                 budget,
             ).message
-        return ReminderExecution(
-            null,
-            BotReply(
-                answer.content?.takeIf { answer.toolCalls.isEmpty() && it.isNotBlank() } ?: texts.get("reply.about"),
-            ),
-        )
+        return ReminderExecution(null, BotReply(persona.render(answer)))
     }
 
     private fun render(

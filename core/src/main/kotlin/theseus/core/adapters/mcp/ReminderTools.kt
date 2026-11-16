@@ -117,7 +117,11 @@ class ReminderTools(
             "list_reminders" -> list(user, args)
             "find_reminders" -> {
                 checkFields(args, setOf("query"))
-                buildJsonObject { put("candidates", JsonArray(reminders.find(user, args.string("query")).map(ReminderView::of))) }
+                val found = reminders.search(user, args.string("query"))
+                buildJsonObject {
+                    put("candidates", JsonArray(found.reminders.map(ReminderView::of)))
+                    if (found.truncated) put("truncated", true)
+                }
             }
             "get_reminder" -> get(user, args)
             "update_reminder" -> update(user, args, confirmation)
@@ -154,15 +158,27 @@ class ReminderTools(
         args: JsonObject,
         confirmation: Confirmation?,
     ): JsonObject {
-        checkFields(args, setOf("reminder_id", "scope", "occurrence_local"))
+        checkFields(args, setOf("reminder_id", "reminder_ids", "scope", "occurrence_local"))
         val scope = args.optionalString("scope")
-        if (scope == "all") {
+        if (scope == "selected") return deleteSelected(user, args, confirmation)
+        return if (scope == "all") {
             if (args.keys != setOf("scope")) invalid()
-            return buildJsonObject {
+            buildJsonObject {
                 put("status", "deleted_all")
                 put("deleted_count", reminders.deleteAll(user, confirmation))
             }
+        } else {
+            deleteOne(user, args, confirmation)
         }
+    }
+
+    private suspend fun deleteOne(
+        user: Long,
+        args: JsonObject,
+        confirmation: Confirmation?,
+    ): JsonObject {
+        if ("reminder_ids" in args) invalid()
+        val scope = args.optionalString("scope")
         val local = args.moment("occurrence_local")
         if (scope == "occurrence" && local == null && confirmation != null) invalid()
         val reminder = reminders.delete(user, args.id(), scope, local, confirmation)
@@ -170,6 +186,30 @@ class ReminderTools(
             put("status", if (scope == "occurrence") "occurrence_skipped" else "deleted")
             put("reminder", ReminderView.of(reminder))
             if (scope == "occurrence") put("occurrence_local", args.string("occurrence_local"))
+        }
+    }
+
+    private suspend fun deleteSelected(
+        user: Long,
+        args: JsonObject,
+        confirmation: Confirmation?,
+    ): JsonObject {
+        if (args.keys != setOf("scope", "reminder_ids")) invalid()
+        val ids =
+            (args["reminder_ids"] as? JsonArray)?.map { value ->
+                (value as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull ?: invalid()
+            } ?: invalid()
+        if (confirmation != null) {
+            return buildJsonObject {
+                put("status", "deleted_selected")
+                put("deleted_count", reminders.deleteSelected(user, ids, confirmation))
+            }
+        }
+        val selection = reminders.deletionSelection(user, ids)
+        return buildJsonObject {
+            put("status", "confirmation_required")
+            put("reminders", JsonArray(selection.reminders.map(ReminderView::of)))
+            put("fingerprint", selection.fingerprint)
         }
     }
 

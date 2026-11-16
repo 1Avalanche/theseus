@@ -48,6 +48,8 @@ class ReminderActions(
         val prepared =
             if (name == "delete_reminder" && args.value("scope") == "all") {
                 deleteAll(user, args, eventKey)
+            } else if (name == "delete_reminder" && args.value("scope") == "selected") {
+                deleteSelected(user, args, eventKey)
             } else if (needsSnapshot(name, args)) {
                 critical(user, name, args, eventKey)
             } else {
@@ -76,6 +78,21 @@ class ReminderActions(
             "update_reminder" -> args["recurrence"] is JsonObject || "when" in args
             else -> false
         }
+
+    private suspend fun deleteSelected(
+        user: CoreUser,
+        args: JsonObject,
+        eventKey: String,
+    ): ReminderExecution {
+        if (args.keys != setOf("scope", "reminder_ids")) return error()
+        val preview = operations.perform(eventKey, user.id, "delete_reminder", args)
+        if (preview.isError) return ReminderExecution(preview)
+        val card = Json.parseToJsonElement(preview.text).jsonObject
+        if (card.value("status") != "confirmation_required" || card["reminders"] !is JsonArray || card["fingerprint"] !is JsonPrimitive) {
+            return error()
+        }
+        return ReminderExecution(null, propose(user, "delete_reminder", args, card, eventKey))
+    }
 
     private suspend fun deleteAll(
         user: CoreUser,
@@ -211,6 +228,7 @@ class ReminderActions(
         when {
             name == "create_reminder" -> "confirmation.create_anyway"
             name == "delete_reminder" && args.value("scope") == "all" -> "confirmation.delete_all_button"
+            name == "delete_reminder" && args.value("scope") == "selected" -> "confirmation.delete_selected_button"
             name == "delete_reminder" -> "confirmation.delete_button"
             else -> "confirmation.accept"
         }
@@ -291,7 +309,7 @@ class ReminderActions(
                         if (result == null) throw theseus.agent.system.UncertainMcpException()
                         if (operation.eventKey in cardSources) return@mapNotNull null
                         val execution =
-                            if (result.body.value("status") == "possible_duplicate" ||
+                            if (result.body.value("status") in setOf("possible_duplicate", "confirmation_required") ||
                                 (result.body["error"] as? JsonObject)?.value("code") == "confirmation_required"
                             ) {
                                 execute(user, operation.path, operation.body.getValue("arguments").jsonObject, operation.eventKey)

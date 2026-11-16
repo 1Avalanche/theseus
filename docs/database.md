@@ -8,6 +8,7 @@
 - Миграция core `V3__erased_operations.sql` создаёт `erased_operations`; agent `V2__erased_journal.sql` создаёт `erased_journal`. Таблицы сохраняют минимальные идентификаторы для защиты от повторов после тестового удаления пользователя.
 - Миграция core `V4__combined_deliveries.sql` расширяет допустимые виды доставки значением `SCHEDULED_AND_SNOOZED`; новые поля напоминаний не добавляются. Agent `V3__pending_actions.sql` создаёт индекс карточек подтверждения без открытого содержимого.
 - Agent `V4__dialog.sql` создаёт `dialog_sessions` и `dialog_messages`. Новый админ создаётся в `ONBOARDING`; существующая строка не меняется. Подтверждения используют `pending_actions` и зашифрованный журнал `outgoing_operations`.
+- Agent `V5__reminder_message_links.sql` создаёт ссылки отправленных ответов агента на напоминания для Telegram reply; пользовательский текст в этих ссылках не хранится.
 - Разовые напоминания имеют `recurrence_rule = null`; серии хранят RRULE, переносы отдельных срабатываний используют `parent_id`.
 
 Решения и причины — `docs/DECISIONS.md`, раздел 11.
@@ -118,6 +119,7 @@ erDiagram
     core_users ||..o| onboarding_state : "user_id"
     core_users ||..o{ outgoing_operations : "user_id"
     core_users ||..o{ incoming_events : "user_id"
+    core_users ||..o{ reminder_message_links : "user_id"
     dialog_sessions ||--o{ dialog_messages : "session_id"
     outgoing_operations ||--o| pending_actions : "id"
 
@@ -140,6 +142,14 @@ erDiagram
         text event_id
         text role "USER | ASSISTANT"
         text content
+    }
+    reminder_message_links {
+        bigint user_id PK
+        bigint telegram_message_id PK
+        bigint reminder_id
+        text reminder_kind "one_time | recurring"
+        text timezone
+        timestamptz created_at
     }
     pending_actions {
         uuid id PK,FK
@@ -413,6 +423,23 @@ Agent создаёт таблицу миграцией `V4__dialog.sql`.
 
 - Индексы `(session_id, id)`, `(user_id, created_at)`; unique `(user_id, event_id, role)`.
 - Фоновая задача удаляет сообщения через 30 дней после создания. При удалении сессии её оставшиеся сообщения удаляются каскадно. Содержимое сообщений и саммари шифруется AES-256-GCM ключом `THESEUS_JOURNAL_KEY` с привязкой к записи; идентификаторы, даты и нумерация списка в `state` хранятся без шифрования.
+
+### `reminder_message_links` — связь ответа агента с напоминанием
+
+Agent создаёт таблицу миграцией `V5__reminder_message_links.sql`. Она связывает фактически отправленное сообщение агента с единственной подтверждённой целью из журнала MCP; текст сообщения не разбирается и в таблицу не записывается.
+
+| Колонка | Тип | Null | Описание |
+|---|---|---|---|
+| `user_id` | bigint PK | | логическая ссылка на пользователя core |
+| `telegram_message_id` | bigint PK | | положительный id отправленного сообщения Telegram |
+| `reminder_id` | bigint | | положительный id напоминания core |
+| `reminder_kind` | text | | `one_time` или `recurring` |
+| `timezone` | text | | IANA-таймзона напоминания |
+| `created_at` | timestamptz | | время сохранения связи |
+
+Первичный ключ `(user_id, telegram_message_id)` ограничивает поиск пользователем; индекс `created_at` используется очисткой. Связь хранится до 30 дней от создания и удаляется фоновой очисткой либо при `/hard_delete`. Она не связана с сессией диалога и доступна после закрытия сессии через 4 часа. Старые сообщения, для которых id не был сохранён, автоматически не получают связи; пользователь может проверить reply на новом ответе после обновления.
+
+Сохранение в БД следует за отправкой Telegram и не является общей с ней транзакцией. При сбое между отправкой и записью исходное сообщение может остаться без связи; повторная доставка может создать новое сообщение и связь для него.
 
 ### `pending_actions` — индекс карточек подтверждения
 

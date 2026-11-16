@@ -33,6 +33,41 @@ import java.util.UUID
 @Testcontainers(disabledWithoutDocker = true)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AgentStoreIntegrationTest {
+    @Test fun `sent reply targets survive restart remain user scoped expire and erase with user`() =
+        runTest {
+            val now = clock.instant()
+            val target = theseus.agent.dialog.ReminderReplyTarget(17, "recurring", "Europe/Moscow")
+            store(pool()).use { journal ->
+                journal.dialogs.rememberReply(961, 500, target, now)
+                journal.dialogs.rememberReply(962, 500, target.copy(reminderId = 18), now)
+            }
+            val saved = pool()
+            store(saved).use { journal ->
+                val dialogs = journal.dialogs
+                assertEquals(target, dialogs.replyTarget(961, 500, now.plusSeconds(4 * 3600)))
+                assertEquals(target.copy(reminderId = 18), dialogs.replyTarget(962, 500, now))
+                assertEquals(null, dialogs.replyTarget(963, 500, now))
+                dialogs.rememberReply(961, 500, target.copy(reminderId = 99), now.plusSeconds(60))
+                assertEquals(target, dialogs.replyTarget(961, 500, now.plusSeconds(60)))
+                val expired = now.plusSeconds(30L * 86400 + 1)
+                assertEquals(null, dialogs.replyTarget(961, 500, expired))
+                dialogs.cleanup(expired)
+                saved.connection.use { connection ->
+                    connection.createStatement().use { statement ->
+                        statement.executeQuery("select count(*) from reminder_message_links where user_id in (961,962)").use { row ->
+                            assertTrue(row.next())
+                            assertEquals(0, row.getInt(1))
+                        }
+                    }
+                }
+                dialogs.rememberReply(961, 501, target, now)
+                dialogs.rememberReply(962, 501, target.copy(reminderId = 18), now)
+                journal.eraseUser(961, 9961, emptyList())
+                assertEquals(null, dialogs.replyTarget(961, 501, now))
+                assertEquals(target.copy(reminderId = 18), dialogs.replyTarget(962, 501, now))
+            }
+        }
+
     @Test fun `recovered outcome appends to original session once without opening a new session`() =
         runTest {
             store(pool()).use { journal ->
