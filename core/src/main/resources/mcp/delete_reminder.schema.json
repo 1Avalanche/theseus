@@ -1,18 +1,20 @@
 {
   "type": "object",
   "properties": {
+    "reminder_ids": {"type":"array","items":{"type":"integer","minimum":1},"minItems":1,"uniqueItems":true},
     "reminder_id": {
       "type": "integer",
       "minimum": 1,
-      "description": "Обязателен для одной цели; при scope=all отсутствует."
+      "description": "Только для одной цели."
     },
     "scope": {
       "type": "string",
-      "description": "series — вся серия; occurrence — одно срабатывание; all — все текущие напоминания пользователя без reminder_id. Для разового scope отсутствует.",
+      "description": "series — серия; occurrence — срабатывание; all — все; selected — выбранная группа с reminder_ids. Для разового scope отсутствует.",
       "enum": [
         "series",
         "occurrence",
-        "all"
+        "all",
+        "selected"
       ]
     },
     "occurrence_local": {

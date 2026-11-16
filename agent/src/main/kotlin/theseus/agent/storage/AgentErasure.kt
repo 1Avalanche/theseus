@@ -26,6 +26,10 @@ internal class AgentErasure(
         inviteIds: List<Long>,
     ) {
         val affectedOperations = findOperations(userId, chatId, inviteIds)
+        connection.prepareStatement("delete from reminder_message_links where user_id=?").use {
+            it.setLong(1, userId)
+            it.executeUpdate()
+        }
         connection.prepareStatement("delete from dialog_sessions where user_id=? or chat_id=?").use {
             it.setLong(1, userId)
             it.setLong(2, chatId)

@@ -4,7 +4,7 @@
     "topic": {
       "type": "string",
       "enum": ["greeting", "about", "capabilities", "clarify", "unsupported", "unsupported_recurrence", "invalid_date", "choose_reminder", "missing_time"],
-      "description": "greeting — приветствие; about — кто ты; capabilities — возможности; clarify — не хватает данных; unsupported — календарь или задачи; unsupported_recurrence — повтор чаще раза в день; invalid_date — несуществующая дата; choose_reminder — несколько подходящих целей; missing_time — не указан нужный час."
+      "description": "clarify — нет содержания; unsupported — нет функции; unsupported_recurrence — чаще раза в день; invalid_date — неверная дата; choose_reminder — неоднозначность; missing_time — нет часа."
     }
   },
   "required": ["topic"],

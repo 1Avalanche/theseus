@@ -9,6 +9,7 @@ import theseus.agent.dialog.DialogEntry
 import theseus.agent.dialog.DialogSession
 import theseus.agent.dialog.DialogStore
 import theseus.agent.dialog.ListReference
+import theseus.agent.dialog.ReminderReplyTarget
 import theseus.agent.llm.Role
 import java.time.Instant
 import java.time.ZoneOffset
@@ -18,6 +19,56 @@ class JdbcDialogStore(
     private val pool: HikariDataSource,
     private val cipher: JournalCipher,
 ) : DialogStore {
+    override suspend fun rememberReply(
+        userId: Long,
+        messageId: Long,
+        target: ReminderReplyTarget,
+        now: Instant,
+    ) = pool.tx { connection ->
+        connection
+            .prepareStatement(
+                """insert into reminder_message_links(user_id,telegram_message_id,reminder_id,reminder_kind,timezone,created_at)
+                    values (?,?,?,?,?,?) on conflict(user_id,telegram_message_id) do nothing""",
+            ).use {
+                it.setLong(1, userId)
+                it.setLong(2, messageId)
+                it.setLong(3, target.reminderId)
+                it.setString(4, target.kind)
+                it.setString(5, target.timezone)
+                it.setObject(6, now.atOffset(ZoneOffset.UTC))
+                it.executeUpdate()
+                Unit
+            }
+    }
+
+    override suspend fun replyTarget(
+        userId: Long,
+        messageId: Long,
+        now: Instant,
+    ): ReminderReplyTarget? =
+        pool.tx { connection ->
+            connection
+                .prepareStatement(
+                    """select reminder_id,reminder_kind,timezone from reminder_message_links
+                    where user_id=? and telegram_message_id=? and created_at>=?""",
+                ).use {
+                    it.setLong(1, userId)
+                    it.setLong(2, messageId)
+                    it.setObject(3, now.minusSeconds(30 * 86400).atOffset(ZoneOffset.UTC))
+                    it.executeQuery().use { row ->
+                        if (row.next()) {
+                            ReminderReplyTarget(
+                                row.getLong(1),
+                                row.getString(2),
+                                row.getString(3),
+                            )
+                        } else {
+                            null
+                        }
+                    }
+                }
+        }
+
     override suspend fun open(
         userId: Long,
         chatId: Long,
@@ -180,6 +231,10 @@ class JdbcDialogStore(
 
     override suspend fun cleanup(now: Instant) =
         pool.tx { connection ->
+            connection.prepareStatement("delete from reminder_message_links where created_at<?").use {
+                it.setObject(1, now.minusSeconds(30 * 86400).atOffset(ZoneOffset.UTC))
+                it.executeUpdate()
+            }
             connection
                 .prepareStatement(
                     """update dialog_sessions set closed_at=last_activity_at+interval '4 hours'

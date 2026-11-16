@@ -226,10 +226,17 @@ class ReminderService(
     suspend fun find(
         userId: Long,
         query: String,
-    ): List<Reminder> =
+    ): List<Reminder> = search(userId, query).reminders
+
+    /** Усечение сообщается адаптеру явно: часть кандидатов нельзя выдать за полную тематическую группу. */
+    suspend fun search(
+        userId: Long,
+        query: String,
+    ): ReminderList =
         atomic(userId) {
             if (query.isBlank() || query.length > MAX_TEXT_LENGTH) invalid()
-            active(userId).sortedByDescending { duplicates.similarity(query, it.text) }.take(FIND_LIMIT)
+            val rows = active(userId).sortedByDescending { duplicates.similarity(query, it.text) }
+            ReminderList(rows.take(FIND_LIMIT), null, truncated = rows.size > FIND_LIMIT)
         }
 
     suspend fun snapshot(
@@ -429,6 +436,43 @@ class ReminderService(
             targets.size
         }
 
+    /** Полный снимок явно выбранной группы, включая невыполненные дочерние переносы. */
+    suspend fun deletionSelection(
+        userId: Long,
+        ids: List<Long>,
+    ): ReminderList =
+        atomic(userId) {
+            val targets = selectedTargets(userId, ids)
+            ReminderList(targets, null, fingerprint = fingerprint(targets))
+        }
+
+    /** Проверяет всю группу до первого изменения; посторонние записи в снимок не входят. */
+    suspend fun deleteSelected(
+        userId: Long,
+        ids: List<Long>,
+        confirmation: Confirmation?,
+    ): Int =
+        atomic(userId) {
+            val targets = selectedTargets(userId, ids)
+            verify(confirmation, fingerprint(targets))
+            val now = clock.instant()
+            if (targets.any { it.nextFireAt != null && it.nextFireAt <= now }) throw DomainException(ErrorCode.CONFIRMATION_STALE)
+            targets.forEach {
+                reminders.save(it.copy(status = ReminderStatus.DELETED, nextFireAt = null, snoozedUntil = null, pausedUntil = null), now)
+            }
+            targets.size
+        }
+
+    private suspend fun selectedTargets(
+        userId: Long,
+        ids: List<Long>,
+    ): List<Reminder> {
+        if (ids.isEmpty() || ids.any { it <= 0 } || ids.distinct().size != ids.size) invalid()
+        val roots = ids.map { requireReminder(userId, it) }
+        if (roots.any { it.status !in setOf(ReminderStatus.ACTIVE, ReminderStatus.PAUSED) }) invalidState()
+        return (roots + ids.flatMap { children(userId, it, rejectUnsupported = true) }).distinctBy { it.id }.sortedBy { it.id }
+    }
+
     suspend fun snooze(
         userId: Long,
         id: Long,
@@ -504,6 +548,7 @@ class ReminderService(
     private suspend fun children(
         userId: Long,
         id: Long,
+        rejectUnsupported: Boolean = false,
     ): List<Reminder> {
         val rows = reminders.list(userId)
         val descendants = mutableSetOf(id)
@@ -514,7 +559,13 @@ class ReminderService(
                 if (row.parentId in descendants && descendants.add(row.id)) added = true
             }
         } while (added)
-        return rows.filter { it.id != id && it.id in descendants && it.status in setOf(ReminderStatus.ACTIVE, ReminderStatus.PAUSED) }
+        val children = rows.filter { it.id != id && it.id in descendants }
+        if (rejectUnsupported &&
+            children.any { it.status == ReminderStatus.UNSUPPORTED }
+        ) {
+            throw DomainException(ErrorCode.UNSUPPORTED_STATE)
+        }
+        return children.filter { it.status in setOf(ReminderStatus.ACTIVE, ReminderStatus.PAUSED) }
     }
 
     private suspend fun requireReminder(

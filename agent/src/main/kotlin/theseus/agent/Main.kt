@@ -109,7 +109,17 @@ fun main() {
                 dialogs = store.dialogs,
                 clock = clock,
             )
-        val pollingJob = TelegramBotRunner(bot, handler, system, store, operations, config.adminChatId, chatLocks).run(scope)
+        val pollingJob =
+            TelegramBotRunner(
+                bot,
+                handler,
+                system,
+                store,
+                operations,
+                config.adminChatId,
+                chatLocks,
+                replyLinks = theseus.agent.system.ReminderReplyLinks(store, store.dialogs, clock),
+            ).run(scope)
         monitor.start(scope, pollingJob)
         pollingJob.join()
     }

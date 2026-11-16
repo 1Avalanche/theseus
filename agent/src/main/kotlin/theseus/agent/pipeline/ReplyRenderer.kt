@@ -29,8 +29,8 @@ class ReplyRenderer(
         now: Instant,
     ): String? {
         val result = parseObject(resultJson) ?: return null
-        if (tool == "delete_reminder" && result.string("status") == "deleted_all") {
-            return texts.get("reply.deleted_all", mapOf("count" to result.string("deleted_count").orEmpty()))
+        if (tool == "delete_reminder" && result.string("status") in setOf("deleted_all", "deleted_selected")) {
+            return texts.get("reply.${result.string("status")}", mapOf("count" to result.string("deleted_count").orEmpty()))
         }
         val reminder = result["reminder"] as? JsonObject
         return when (tool) {
@@ -129,20 +129,10 @@ class ReplyRenderer(
             val count = (data["reminders"] as? JsonArray)?.size ?: 0
             return texts.get("confirmation.delete_all", mapOf("count" to count.toString()))
         }
-        if (name == "create_reminder") {
-            val candidates = (data["candidates"] as? JsonArray).orEmpty()
-            val shown = candidates.take(MAX_DUPLICATES_SHOWN).joinToString("\n") { item(it.jsonObject, zone, now) }
-            val more =
-                if (candidates.size > MAX_DUPLICATES_SHOWN) {
-                    "\n" + texts.get("confirmation.more", mapOf("count" to (candidates.size - MAX_DUPLICATES_SHOWN).toString()))
-                } else {
-                    ""
-                }
-            val proposed = (data["proposed"] as? JsonObject)?.let { item(it, zone, now) }.orEmpty()
-            val same = candidates.take(MAX_DUPLICATES_SHOWN).any { item(it.jsonObject, zone, now) == proposed }
-            val added = if (same) "" else "\n" + texts.get("confirmation.proposed", mapOf("target" to proposed))
-            return texts.get("confirmation.duplicate", mapOf("existing" to shown + more, "proposed" to added))
+        if (name == "delete_reminder" && args.string("scope") == "selected") {
+            return selectedConfirmation(data, zone, now)
         }
+        if (name == "create_reminder") return duplicateConfirmation(data, zone, now)
         val key =
             when (name) {
                 "delete_reminder" -> if (args.string("scope") == "occurrence") "confirmation.skip" else "confirmation.delete"
@@ -161,6 +151,40 @@ class ReplyRenderer(
             ),
         ) +
             occurrence + delta + "\n" + texts.get("confirmation.ttl")
+    }
+
+    private fun duplicateConfirmation(
+        data: JsonObject,
+        zone: ZoneId,
+        now: Instant,
+    ): String {
+        val candidates = (data["candidates"] as? JsonArray).orEmpty()
+        val shown = candidates.take(MAX_DUPLICATES_SHOWN).joinToString("\n") { item(it.jsonObject, zone, now) }
+        val more =
+            if (candidates.size > MAX_DUPLICATES_SHOWN) {
+                "\n" + texts.get("confirmation.more", mapOf("count" to (candidates.size - MAX_DUPLICATES_SHOWN).toString()))
+            } else {
+                ""
+            }
+        val proposed = (data["proposed"] as? JsonObject)?.let { item(it, zone, now) }.orEmpty()
+        val same = candidates.take(MAX_DUPLICATES_SHOWN).any { item(it.jsonObject, zone, now) == proposed }
+        val added = if (same) "" else "\n" + texts.get("confirmation.proposed", mapOf("target" to proposed))
+        return texts.get("confirmation.duplicate", mapOf("existing" to shown + more, "proposed" to added))
+    }
+
+    private fun selectedConfirmation(
+        data: JsonObject,
+        zone: ZoneId,
+        now: Instant,
+    ): String {
+        val rows = (data["reminders"] as? JsonArray).orEmpty()
+        return texts.get(
+            "confirmation.delete_selected",
+            mapOf(
+                "count" to rows.size.toString(),
+                "targets" to rows.joinToString("\n") { item(it.jsonObject, zone, now) },
+            ),
+        ) + "\n" + texts.get("confirmation.ttl")
     }
 
     private fun recurrenceDelta(args: JsonObject): String =

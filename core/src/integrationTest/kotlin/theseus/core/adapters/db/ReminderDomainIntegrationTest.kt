@@ -58,6 +58,129 @@ import java.util.UUID
 @Testcontainers(disabledWithoutDocker = true)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ReminderDomainIntegrationTest {
+    @Test fun `selected deletion rejects malformed id arrays and mixing scopes`() =
+        runTest {
+            val owner = activeUser()
+            series(owner.id)
+            for (value in listOf(
+                """{"scope":"selected","reminder_ids":[]}""",
+                """{"scope":"selected","reminder_ids":["1"]}""",
+                """{"scope":"selected","reminder_ids":[1,1]}""",
+                """{"scope":"selected","reminder_ids":[-1]}""",
+                """{"scope":"selected","reminder_ids":[1],"reminder_id":1}""",
+                """{"scope":"all","reminder_ids":[1]}""",
+                """{"reminder_id":1,"reminder_ids":[1]}""",
+            )) {
+                assertEquals("invalid_arguments", tools.call("delete_reminder", owner.id, args(value), UUID.randomUUID().toString()).code())
+            }
+            assertEquals(1, service.list(owner.id).reminders.size)
+        }
+
+    @Test fun `selected deletion preview is read only and confirmed subset replays without touching other reminders`() =
+        runTest {
+            val owner = activeUser()
+            val other = activeUser(200)
+            val water =
+                service.createOneTime(
+                    owner.id,
+                    "Пить воду",
+                    When(
+                        after =
+                            theseus.core.domain.reminder
+                                .After(days = 1),
+                    ),
+                )
+            val buyWater =
+                service.createOneTime(
+                    owner.id,
+                    "Купить воду",
+                    When(
+                        after =
+                            theseus.core.domain.reminder
+                                .After(days = 1),
+                    ),
+                )
+            val foreign = series(other.id)
+            val arguments = args("""{"scope":"selected","reminder_ids":[${water.id},${buyWater.id}]}""")
+            val previewKey = UUID.randomUUID().toString()
+            val preview = tools.call("delete_reminder", owner.id, arguments, previewKey)
+            assertEquals(
+                "confirmation_required",
+                preview
+                    .body()
+                    .getValue("status")
+                    .jsonPrimitive.content,
+            )
+            assertEquals(2, service.list(owner.id).reminders.size)
+            assertEquals(preview, tools.call("delete_reminder", owner.id, arguments, previewKey))
+            val confirmation =
+                buildJsonObject {
+                    put("fingerprint", preview.body().getValue("fingerprint"))
+                    put("created_at", clock.instant().toString())
+                }
+            val unrelated =
+                service.createOneTime(
+                    owner.id,
+                    "Позвонить маме",
+                    When(
+                        after =
+                            theseus.core.domain.reminder
+                                .After(days = 1),
+                    ),
+                )
+            val executeKey = UUID.randomUUID().toString()
+            val deleted = tools.call("delete_reminder", owner.id, arguments, executeKey, confirmation)
+            assertEquals(
+                "deleted_selected",
+                deleted
+                    .body()
+                    .getValue("status")
+                    .jsonPrimitive.content,
+            )
+            assertEquals(
+                "2",
+                deleted
+                    .body()
+                    .getValue("deleted_count")
+                    .jsonPrimitive.content,
+            )
+            assertEquals(deleted, tools.call("delete_reminder", owner.id, arguments, executeKey, confirmation))
+            assertEquals(listOf(unrelated.id), service.list(owner.id).reminders.map { it.id })
+            assertEquals(listOf(foreign.id), service.list(other.id).reminders.map { it.id })
+        }
+
+    @Test fun `selected deletion rejects foreign targets and stale snapshot atomically`() =
+        runTest {
+            val owner = activeUser()
+            val other = activeUser(200)
+            val first = series(owner.id)
+            val second =
+                service.createOneTime(
+                    owner.id,
+                    "Купить воду",
+                    When(
+                        after =
+                            theseus.core.domain.reminder
+                                .After(days = 1),
+                    ),
+                )
+            val foreign = series(other.id)
+            val mixed = args("""{"scope":"selected","reminder_ids":[${first.id},${foreign.id}]}""")
+            assertEquals("not_found", tools.call("delete_reminder", owner.id, mixed, UUID.randomUUID().toString()).code())
+            val arguments = args("""{"scope":"selected","reminder_ids":[${first.id},${second.id}]}""")
+            val preview = tools.call("delete_reminder", owner.id, arguments, UUID.randomUUID().toString()).body()
+            val confirmation =
+                buildJsonObject {
+                    put("fingerprint", preview.getValue("fingerprint"))
+                    put("created_at", clock.instant().toString())
+                }
+            reminders.save(second.copy(text = "Изменено"), clock.instant())
+            val failed = tools.call("delete_reminder", owner.id, arguments, UUID.randomUUID().toString(), confirmation)
+            assertEquals("confirmation_stale", failed.code())
+            assertEquals(2, service.list(owner.id).reminders.size)
+            assertEquals(1, service.list(other.id).reminders.size)
+        }
+
     @Test fun `reserved delivery id reaches keyboard and is scoped for reply lookup`() =
         runTest {
             val user = activeUser()

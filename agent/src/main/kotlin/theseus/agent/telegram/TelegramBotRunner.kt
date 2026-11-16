@@ -41,6 +41,7 @@ class TelegramBotRunner(
     private val operations: OutgoingOperations,
     private val adminChatId: Long,
     private val chatLocks: ChatLocks = ChatLocks(),
+    private val replyLinks: theseus.agent.system.ReminderReplyLinks? = null,
 ) {
     private val log = LoggerFactory.getLogger(TelegramBotRunner::class.java)
 
@@ -87,12 +88,12 @@ class TelegramBotRunner(
         locked(input.chatId) {
             // Незавершённый шаг чата завершаем перед приёмом следующего шага онбординга.
             for (event in store.pendingEvents().filter { it.snapshot.input.chatId == input.chatId && it.snapshot.input.id != input.id }) {
-                send(input.chatId, system.resume(event))
+                send(input.chatId, system.resume(event), event.snapshot.input.id)
                 store.delivered(event.snapshot.input.id)
             }
             val reply = system.handle(input)
             if (reply != null) {
-                send(input.chatId, reply)
+                send(input.chatId, reply, input.id)
                 store.delivered(input.id)
             } else {
                 val event = system.beginDialogue(input)
@@ -101,14 +102,15 @@ class TelegramBotRunner(
                     handler
                         .handleReply(input.chatId, requireNotNull(input.text), input.id, input.replyMessageId) ?: system.resume(event)
                 store.finishEvent(input.id, response)
-                send(input.chatId, response)
+                send(input.chatId, response, input.id)
                 store.delivered(input.id)
             }
         }
 
-    private suspend fun send(
+    internal suspend fun send(
         chatId: Long,
         reply: BotReply,
+        eventId: String,
     ) {
         reply.clearKeyboardMessageId?.let {
             try {
@@ -125,7 +127,8 @@ class TelegramBotRunner(
                 }
             // Длинные административные списки делятся без parse_mode и без интерпретации текста как Markdown.
             telegramChunks(reply.text).forEachIndexed { index, chunk ->
-                bot.sendTextMessage(ChatId(RawChatId(chatId)), chunk, replyMarkup = if (index == 0) keyboard else null)
+                val sent = bot.sendTextMessage(ChatId(RawChatId(chatId)), chunk, replyMarkup = if (index == 0) keyboard else null)
+                replyLinks?.sent(eventId, chatId, sent.messageId.long, reply)
             }
         }
         reply.adminNotice?.let { bot.sendTextMessage(ChatId(RawChatId(adminChatId)), it) }
@@ -136,7 +139,7 @@ class TelegramBotRunner(
             operations.recover()
             for (event in store.pendingEvents()) {
                 locked(event.snapshot.input.chatId) {
-                    send(event.snapshot.input.chatId, system.resume(event))
+                    send(event.snapshot.input.chatId, system.resume(event), event.snapshot.input.id)
                     store.delivered(event.snapshot.input.id)
                 }
             }

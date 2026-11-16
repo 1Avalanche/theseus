@@ -23,6 +23,23 @@ import java.nio.file.Path
 import java.time.Instant
 
 internal class FakeDialogs : DialogStore {
+    val replyTargets = mutableMapOf<Pair<Long, Long>, theseus.agent.dialog.ReminderReplyTarget>()
+
+    override suspend fun rememberReply(
+        userId: Long,
+        messageId: Long,
+        target: theseus.agent.dialog.ReminderReplyTarget,
+        now: Instant,
+    ) {
+        replyTargets.putIfAbsent(userId to messageId, target)
+    }
+
+    override suspend fun replyTarget(
+        userId: Long,
+        messageId: Long,
+        now: Instant,
+    ) = replyTargets[userId to messageId]
+
     var session = DialogSession(1, null, emptyList(), emptyList())
     private val events = mutableSetOf<String>()
     var summarizedUntil: Long? = null
@@ -72,6 +89,28 @@ internal class FakeDialogs : DialogStore {
         now: Instant,
     ) {
         append(session.id, userId, eventId, Role.ASSISTANT, content, now)
+    }
+}
+
+internal fun productionTools(): List<ToolDefinition> {
+    val relative = Path.of("../core/src/main/resources/mcp")
+    val resources = if (Files.exists(relative)) relative else Path.of("core/src/main/resources/mcp")
+    return listOf(
+        "create_reminder",
+        "list_reminders",
+        "find_reminders",
+        "get_reminder",
+        "update_reminder",
+        "delete_reminder",
+        "snooze_reminder",
+        "pause_reminder",
+        "resume_reminder",
+    ).map { name ->
+        ToolDefinition(
+            name,
+            Files.readString(resources.resolve("$name.md")),
+            Json.parseToJsonElement(Files.readString(resources.resolve("$name.schema.json"))).jsonObject,
+        )
     }
 }
 

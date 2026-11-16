@@ -6,6 +6,18 @@
     "gender": "female"
   },
   "fixtures": {
+    "cat_reply": {
+      "reminders": [
+        {"id": 31, "text": "Погладить кота", "status": "active", "recurrence": {"freq": "daily", "time": "10:00", "start_date": "2026-11-01"}}
+      ]
+    },
+    "water_group": {
+      "reminders": [
+        {"id": 21, "text": "Пить воду", "status": "active", "recurrence": {"freq": "daily", "time": "18:45", "start_date": "2026-11-01"}},
+        {"id": 22, "text": "Купить воду", "status": "active", "when": {"date": "2026-11-03", "time": "10:00"}},
+        {"id": 23, "text": "Позвонить маме", "status": "active", "when": {"date": "2026-11-03", "time": "11:00"}}
+      ]
+    },
     "water": {
       "reminders": [
         {"id": 21, "text": "Пить воду", "status": "active", "recurrence": {"freq": "daily", "time": "18:45", "start_date": "2026-11-01"}}
