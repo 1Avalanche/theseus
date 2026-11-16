@@ -103,7 +103,7 @@ class SystemHandler(
             command == "/hard_delete" -> deleteUser(input, user.id)
             user.status == "onboarding" ->
                 if (command == "/version") {
-                    BotReply(requireNotNull(dialogue.commandReply("/version", user)))
+                    BotReply(requireNotNull(dialogue.commandReply("/version")))
                 } else {
                     onboarding.handle(snapshot)
                 }
@@ -115,7 +115,7 @@ class SystemHandler(
                     BotReply(texts.get("admin.forbidden"))
                 }
             input.callback != null -> callback(input, user)
-            else -> commandReply(input, user, command)
+            else -> commandReply(input, command)
         }
     }
 
@@ -148,10 +148,9 @@ class SystemHandler(
 
     private fun commandReply(
         input: Incoming,
-        user: CoreUser,
         command: String,
     ): BotReply {
-        val reply = requireNotNull(dialogue.commandReply(input.text.orEmpty(), user))
+        val reply = requireNotNull(dialogue.commandReply(input.text.orEmpty()))
         if (command != "/help" || input.chatId != adminChatId) return BotReply(reply)
         val deleteHelp = if (hardDelete != null) "\n" + texts.get("hard_delete.help") else ""
         return BotReply(reply + "\n" + texts.get("admin.help") + deleteHelp)

@@ -98,7 +98,7 @@ class MessageHandler(
             return null
         }
         return try {
-            dialogue.commandReply(text, user)?.let(::BotReply) ?: converse(user, text, eventId, replyMessageId, budget)
+            dialogue.commandReply(text)?.let(::BotReply) ?: converse(user, text, eventId, replyMessageId, budget)
         } catch (e: CancellationException) {
             throw e
         } catch (e: theseus.agent.system.UncertainMcpException) {
@@ -245,7 +245,7 @@ class MessageHandler(
         val calls = response.message.toolCalls
         if (calls.isEmpty()) {
             log.info("Ответ модели без вызова инструмента, user_id={}", user.id)
-            return BotReply(texts.get(if (messages.any { it.role == Role.TOOL }) "reply.unconfirmed" else "reply.not_created"))
+            return BotReply(texts.get(if (budget.mutationStarted) "reply.unconfirmed" else "reply.unclassified"))
         }
         return toolRound(user, messages, zone, now, usageKey, budget, session, question, rawResults, response.message)
     }
@@ -276,7 +276,7 @@ class MessageHandler(
             } else {
                 calls.mapIndexed { index, call ->
                     if (call.name in TARGET_CHANGES || call.name == "create_reminder") budget.mutationStarted = true
-                    val execution = executeCall(user, call, "$usageKey:tool:$index", session, question, budget)
+                    val execution = executeCall(user, call, "$usageKey:tool:$index", session, question, budget, messages)
                     if (call.name == "list_reminders" &&
                         execution.result?.isError == false
                     ) {
@@ -345,6 +345,7 @@ class MessageHandler(
         session: theseus.agent.dialog.DialogSession?,
         question: String,
         budget: TurnBudget,
+        messages: List<ChatMessage>,
     ): ReminderExecution {
         if (call.name == "resolve_reference" && memory != null) {
             val args =
@@ -355,15 +356,25 @@ class MessageHandler(
         if (!isAbout(call)) return execute(user, call, key)
         val instructions =
             listOf("persona/siri.md", "prompts/persona-answer.md", "persona/siri-facts.md")
-                .joinToString("\n") { PromptBuilder.stripComments(Texts.resourceText(it)) } + "\n" + prompt.context(user, clock.instant())
+                .joinToString(
+                    "\n",
+                ) { PromptBuilder.stripComments(Texts.resourceText(it)) } + "\n" + texts.get("reply.capabilities") + "\n" +
+                prompt.context(user, clock.instant())
         val answer =
             complete(
                 user,
                 LlmRequest(
                     listOf(
                         ChatMessage(Role.SYSTEM, instructions),
-                        ChatMessage(Role.USER, question),
-                    ),
+                    ) +
+                        messages
+                            .drop(1)
+                            .takeWhile { it.role != Role.TOOL && it.toolCalls.isEmpty() }
+                            .filter { it.role in setOf(Role.USER, Role.ASSISTANT) }
+                            .takeLast(PERSONA_HISTORY_MESSAGES)
+                            .let { history ->
+                                if (history.lastOrNull()?.role == Role.USER) history else history + ChatMessage(Role.USER, question)
+                            },
                     emptyList(),
                 ),
                 "$key:persona",
@@ -398,9 +409,18 @@ class MessageHandler(
     ): ReminderExecution {
         val arguments =
             runCatching { Json.parseToJsonElement(call.argumentsJson.ifBlank { "{}" }).jsonObject }.getOrNull()
-                ?: return ReminderExecution(ToolResult(texts.get("tool.invalid_json"), isError = true))
+                ?: return if (call.name == DialogReplies.TOOL_NAME) {
+                    ReminderExecution(null, BotReply(texts.get("reply.unclassified")))
+                } else {
+                    ReminderExecution(ToolResult(texts.get("tool.invalid_json"), isError = true))
+                }
         return if (call.name == DialogReplies.TOOL_NAME) {
-            ReminderExecution(dialogue.execute(user, arguments))
+            val result = dialogue.execute(arguments)
+            if (result.isError) {
+                ReminderExecution(null, BotReply(texts.get("reply.unclassified")))
+            } else {
+                ReminderExecution(result)
+            }
         } else {
             actions?.execute(user, call.name, arguments, eventKey)
                 ?: ReminderExecution(core.callTool(user.id, call.name, arguments))
@@ -418,6 +438,7 @@ class MessageHandler(
 
     companion object {
         const val DEFAULT_MAX_TOOL_ROUNDS = 2
+        private const val PERSONA_HISTORY_MESSAGES = 5
         private const val DEFAULT_MODEL_CONTEXT = 18000
         private const val MAX_INPUT_TOKENS = 16000
         private const val OUTPUT_TOKENS = 2000

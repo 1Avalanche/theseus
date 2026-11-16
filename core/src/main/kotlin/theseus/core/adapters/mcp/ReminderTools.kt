@@ -349,7 +349,7 @@ class ReminderTools(
         val dto = json.decodeFromJsonElement<WhenDto>(value)
         return When(
             date = dto.date?.let(::parseDate),
-            time = dto.time?.let { LocalFormats.parseTime(it) ?: invalid() },
+            time = dto.time?.let { LocalFormats.parseTime(it) ?: throw DomainException(ErrorCode.INVALID_TIME) },
             after = dto.after?.let { After(it.days, it.hours, it.minutes) },
             partOfDay = dto.partOfDay?.let(::partOfDay),
         )
@@ -363,7 +363,7 @@ class ReminderTools(
             dto.byWeekday,
             dto.byMonthDay,
             dto.byMonth,
-            dto.time?.let { LocalFormats.parseTime(it) ?: invalid() },
+            dto.time?.let { LocalFormats.parseTime(it) ?: throw DomainException(ErrorCode.INVALID_TIME) },
             dto.startDate?.let(::parseDate),
             dto.until?.let(::parseDate),
             dto.count,
@@ -428,7 +428,7 @@ class ReminderTools(
 
     private fun parseMoment(value: String): LocalDateTime {
         parseDate(value.substringBefore('T'))
-        return LocalFormats.parseMoment(value) ?: invalid()
+        return LocalFormats.parseMoment(value) ?: throw DomainException(ErrorCode.INVALID_TIME)
     }
 
     private fun JsonObject.date(key: String) = optionalString(key)?.let(::parseDate)

@@ -28,6 +28,6 @@ class PersonaAnswersTest {
         }
         val prompt = Texts.resourceText("prompts/persona-answer.md")
         assertTrue(prompt.contains("Не выдумывай, кто дал имя"))
-        assertTrue(Texts.resourceText("persona/siri-facts.md").contains("Не любишь говорить"))
+        assertTrue(Texts.resourceText("persona/siri-facts.md").contains("не люблю говорить"))
     }
 }

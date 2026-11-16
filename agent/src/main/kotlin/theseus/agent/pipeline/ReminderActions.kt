@@ -245,10 +245,12 @@ class ReminderActions(
         val id = runCatching { UUID.fromString(parts[2]) }.getOrNull() ?: return stale()
         val (card, previous) = store.findOperation(id) ?: return stale()
         if (card.method != "CONFIRM" || card.userId != user.id || !user.isActive) return stale()
-        previous?.let { return BotReply(it.body.value("text")) }
+        previous?.let {
+            return BotReply(texts.get("confirmation.processed"), clearKeyboardMessageId = input.callbackMessageId)
+        }
         val started = store.eventOperations("confirmation:$id").any { it.first.method == "MCP" }
         if (parts[1] == "no" && !started) {
-            return BotReply(texts.get("confirmation.cancelled")).also {
+            return BotReply(texts.get("confirmation.cancelled"), clearKeyboardMessageId = input.callbackMessageId).also {
                 store.finishOperation(
                     id,
                     RestReply(
@@ -290,7 +292,7 @@ class ReminderActions(
                 },
             ),
         )
-        return reply
+        return reply.copy(clearKeyboardMessageId = input.callbackMessageId)
     }
 
     @Suppress("CyclomaticComplexMethod") // Восстановление всех исходов сообщения без повторного LLM и потери карточек.

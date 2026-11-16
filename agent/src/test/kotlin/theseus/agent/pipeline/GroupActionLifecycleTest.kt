@@ -54,7 +54,10 @@ class GroupActionLifecycleTest {
             )
             val cancelled = actions.callback(Incoming("cancel", user.chatId, callback = rows.last().data), user)!!
             assertEquals(texts.get("confirmation.cancelled"), cancelled.text)
-            assertEquals(cancelled, actions.callback(Incoming("yes-after-cancel", user.chatId, callback = rows.first().data), user))
+            assertEquals(
+                texts.get("confirmation.processed"),
+                actions.callback(Incoming("yes-after-cancel", user.chatId, callback = rows.first().data), user)!!.text,
+            )
             assertTrue(core.confirmations.isEmpty())
             assertEquals(1, core.calls.size)
         }
@@ -81,7 +84,7 @@ class GroupActionLifecycleTest {
                 )
             val done = actions.callback(callback, user)!!
             assertEquals("Удалил выбранные напоминания: 2.", done.text)
-            assertEquals(done, actions.callback(callback.copy(id = "repeated"), user))
+            assertEquals(texts.get("confirmation.processed"), actions.callback(callback.copy(id = "repeated"), user)!!.text)
             assertEquals(1, core.confirmations.size)
             assertEquals(2, core.calls.size)
         }

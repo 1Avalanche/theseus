@@ -10,6 +10,7 @@ enum class ErrorCode(
     INVALID_ARGUMENTS("invalid_arguments"),
     INVALID_WHEN("invalid_when"),
     INVALID_DATE("invalid_date"),
+    INVALID_TIME("invalid_time"),
     TIME_IN_PAST("time_in_past"),
     TOO_FAR("too_far"),
     INVALID_RECURRENCE("invalid_recurrence"),

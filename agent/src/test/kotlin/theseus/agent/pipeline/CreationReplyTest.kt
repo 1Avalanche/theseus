@@ -36,6 +36,47 @@ import java.time.ZoneOffset
 import java.util.UUID
 
 class CreationReplyTest {
+    @Test
+    fun `reply with contradictory hour retains verified target and does not change reminder`() =
+        runTest {
+            val user = CoreUser(7, 4242, "active", "Анна", "female", "Europe/Moscow")
+            val now = Instant.parse("2026-11-16T07:00:00Z")
+            val texts = Texts.load("texts/agent.properties")
+            val dialogs = FakeDialogs()
+            dialogs.rememberReply(user.id, 777, theseus.agent.dialog.ReminderReplyTarget(17, "one_time", "Europe/Moscow"), now)
+            val core =
+                FakeCore(mapOf(user.chatId to user)).apply {
+                    specifications = productionTools().map { ToolSpec(it.name, it.description, it.parameters) }
+                }
+            val llm =
+                object : LlmClient {
+                    override suspend fun complete(request: LlmRequest): LlmResponse {
+                        val context = request.messages.last().content!!
+                        assertTrue(context.contains("\"reminder_id\":17"), context)
+                        assertTrue(context.endsWith("перенеси на 15 вечера"), context)
+                        return LlmResponse(
+                            ChatMessage(Role.ASSISTANT, null, listOf(ToolCall("time", "assistant_reply", """{"topic":"invalid_time"}"""))),
+                            "test/main",
+                            null,
+                        )
+                    }
+                }
+            val handler =
+                MessageHandler(
+                    core,
+                    llm,
+                    PromptBuilder.fromResources(texts),
+                    ReplyRenderer(texts),
+                    texts,
+                    Clock.fixed(now, ZoneOffset.UTC),
+                    dialogs = dialogs,
+                )
+            val reply = handler.handleReply(user.chatId, "перенеси на 15 вечера", "invalid-hour", 777)!!
+            assertEquals(texts.get("reply.error.invalid_time"), reply.text)
+            assertTrue(core.calls.isEmpty())
+            assertEquals(17L, dialogs.replyTarget(user.id, 777, now)!!.reminderId)
+        }
+
     @Suppress("LongMethod") // Сквозная связь из журнала создания через Telegram message_id до изменения серии.
     @Test
     fun `reply to daily creation receipt updates series hour without asking for reminder text`() =

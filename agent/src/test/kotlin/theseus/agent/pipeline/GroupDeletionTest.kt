@@ -189,7 +189,7 @@ class GroupDeletionTest {
                 )
             val done = actions.callback(button, owner)!!
             assertEquals("Удалил выбранные напоминания: 2.", done.text)
-            assertEquals(done, actions.callback(button.copy(id = "repeat-water"), owner))
+            assertEquals(texts.get("confirmation.processed"), actions.callback(button.copy(id = "repeat-water"), owner)!!.text)
             assertEquals(1, core.confirmations.size)
             assertEquals(3, llm.requests.size)
         }
