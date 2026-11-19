@@ -22,6 +22,28 @@ import java.time.Clock
 import java.time.Duration
 
 class OpenRouterClientTest {
+    @Test fun `provider failure reasons distinguish http malformed response and empty choices`() =
+        runTest {
+            for (status in listOf(
+                HttpStatusCode.BadRequest,
+                HttpStatusCode.Unauthorized,
+                HttpStatusCode.TooManyRequests,
+                HttpStatusCode.BadGateway,
+            )) {
+                val error = assertThrows<LlmException> { client(status, "private body").complete(request) }
+                assertEquals(LlmFailure.HTTP, error.reason)
+                assertEquals(status.value, error.httpStatus)
+            }
+            assertEquals(
+                LlmFailure.INVALID_RESPONSE,
+                assertThrows<LlmException> { client(body = "private malformed response").complete(request) }.reason,
+            )
+            assertEquals(
+                LlmFailure.EMPTY_CHOICES,
+                assertThrows<LlmException> { client(body = "{}").complete(request) }.reason,
+            )
+        }
+
     @Test fun `summary model output cap and effective window are enforced on wire`() =
         runTest {
             val sent = mutableListOf<String>()

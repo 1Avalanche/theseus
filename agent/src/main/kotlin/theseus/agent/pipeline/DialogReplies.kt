@@ -60,6 +60,14 @@ class DialogReplies(
         }
     }
 
+    /** Для логов разрешены только темы строгого локального контракта. */
+    internal fun approvedTopic(call: theseus.agent.llm.ToolCall): String? {
+        if (call.name != TOOL_NAME) return null
+        val arguments = runCatching { Json.parseToJsonElement(call.argumentsJson).jsonObject }.getOrNull() ?: return null
+        val topic = (arguments["topic"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        return topic?.takeIf { arguments.keys == setOf("topic") && it in replyKeys }
+    }
+
     private fun introduction(): String =
         listOf(
             texts.get("reply.about"),

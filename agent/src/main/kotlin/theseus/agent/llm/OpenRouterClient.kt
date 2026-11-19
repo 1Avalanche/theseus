@@ -82,7 +82,7 @@ class OpenRouterClient(
     }
 
     private fun checkStatus(status: HttpStatusCode) {
-        if (!status.isSuccess()) throw LlmException("OpenRouter HTTP ${status.value}")
+        if (!status.isSuccess()) throw LlmException("OpenRouter HTTP ${status.value}", reason = LlmFailure.HTTP, httpStatus = status.value)
     }
 
     internal fun toWire(request: LlmRequest) =
@@ -113,9 +113,10 @@ class OpenRouterClient(
                 json.decodeFromString<WireResponse>(text)
             } catch (e: IllegalArgumentException) {
                 // SerializationException — тоже IllegalArgumentException.
-                throw LlmException("Неожиданный ответ OpenRouter", e)
+                throw LlmException("Неожиданный ответ OpenRouter", e, reason = LlmFailure.INVALID_RESPONSE)
             }
-        val message = wire.choices.firstOrNull()?.message ?: throw LlmException("OpenRouter: пустой choices")
+        val message =
+            wire.choices.firstOrNull()?.message ?: throw LlmException("OpenRouter: пустой choices", reason = LlmFailure.EMPTY_CHOICES)
         return LlmResponse(
             message =
                 ChatMessage(

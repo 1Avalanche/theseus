@@ -79,6 +79,7 @@ class MessageHandler(
         return try {
             withTimeout(TurnBudget.TIMEOUT_MS) { handleWithinBudget(chatId, text, eventId, replyMessageId, budget) }
         } catch (e: TimeoutCancellationException) {
+            budget.trace.stopped("deadline")
             if (budget.mutationStarted) throw theseus.agent.system.UncertainMcpException(e)
             log.info("Обработка остановлена: reason=deadline")
             BotReply(texts.get("reply.budget"))
@@ -98,6 +99,8 @@ class MessageHandler(
             return null
         }
         return try {
+            budget.trace.started(user.id)
+            budget.trace.mark("dispatch")
             dialogue.commandReply(text)?.let(::BotReply) ?: converse(user, text, eventId, replyMessageId, budget)
         } catch (e: CancellationException) {
             throw e
@@ -106,6 +109,7 @@ class MessageHandler(
         } catch (
             @Suppress("TooGenericExceptionCaught") e: Exception,
         ) {
+            budget.trace.failed(e)
             log.error("Не удалось обработать сообщение user_id={}, ошибка={}", user.id, e.javaClass.simpleName)
             BotReply(texts.get("reply.failure"))
         }
@@ -119,17 +123,21 @@ class MessageHandler(
         budget: TurnBudget,
     ): BotReply {
         val now = clock.instant()
+        budget.trace.mark("history_open")
         val session = dialogs?.open(user.id, user.chatId, now)
         val reply =
             try {
                 conversation(user, text, eventId, replyMessageId, session, budget, now)
             } catch (e: BudgetExceeded) {
+                budget.trace.stopped(e.reason.name)
                 log.info("Обработка остановлена: reason={}, user_id={}", e.reason, user.id)
                 BotReply(texts.get("reply.budget"))
             } catch (_: theseus.agent.llm.LlmBudgetException) {
+                budget.trace.stopped("model_context")
                 log.info("Обработка остановлена: reason=model_context, user_id={}", user.id)
                 BotReply(texts.get("reply.budget"))
             }
+        budget.trace.mark("history_save")
         if (session != null) dialogs.append(session.id, user.id, eventId, Role.ASSISTANT, reply.text, clock.instant())
         return reply
     }
@@ -143,7 +151,9 @@ class MessageHandler(
         budget: TurnBudget,
         now: Instant,
     ): BotReply {
+        budget.trace.mark("usage_check")
         usage.before(user.id)
+        budget.trace.mark("context")
         val zone = ZoneId.of(requireNotNull(user.timezone))
         val messages = mutableListOf(ChatMessage(Role.SYSTEM, prompt.system(user, now)))
         if (session != null) {
@@ -211,7 +221,9 @@ class MessageHandler(
             } else {
                 request
             }
+        budget.trace.mark("context_budget")
         budget.request(contextual, minOf(MAX_INPUT_TOKENS, modelContextTokens - contextual.maxOutputTokens))
+        budget.trace.model(request.role)
         val response =
             try {
                 llm.complete(contextual)
@@ -223,6 +235,7 @@ class MessageHandler(
                 // Ошибка генерации саммари не закрывает обычный диалог; ошибка учёта usage ниже не подавляется.
                 throw if (request.role == "summary") SummaryUnavailable(e) else e
             }
+        budget.trace.mark("usage_record")
         usage.record(user.id, "$key:${UUID.randomUUID()}", response.copy(role = request.role))
         return response
     }
@@ -239,11 +252,13 @@ class MessageHandler(
         question: String,
         rawResults: MutableMap<String, String>,
     ): BotReply? {
+        budget.trace.mark("context_tools")
         fitHistory(messages)
         val response = complete(user, LlmRequest(messages.toList(), tools()), usageKey, budget)
         log.debug("LLM ответила моделью {}, usage={}", response.model, response.usage)
         val calls = response.message.toolCalls
         if (calls.isEmpty()) {
+            budget.trace.stopped("no_tool")
             log.info("Ответ модели без вызова инструмента, user_id={}", user.id)
             return BotReply(texts.get(if (budget.mutationStarted) "reply.unconfirmed" else "reply.unclassified"))
         }
@@ -263,9 +278,11 @@ class MessageHandler(
         message: ChatMessage,
     ): BotReply? {
         val calls = message.toolCalls
+        calls.forEach { budget.trace.selected(it, dialogue.approvedTopic(it)) }
+        budget.trace.mark("tool_budget")
         budget.tools(calls, maxToolRounds)
         // Генерация о себе требует отдельного обращения; смешанный ответ не должен терять уже исполненное изменение.
-        if (calls.size > 1 && calls.any(::isAbout)) throw BudgetExceeded(StopReason.MIXED_PERSONA)
+        if (calls.any(::isAbout) && calls.any { it.name != DialogReplies.TOOL_NAME }) throw BudgetExceeded(StopReason.MIXED_PERSONA)
         messages += message
         val targetChanges = calls.filter { it.name in TARGET_CHANGES }
         val candidates = candidateResult(messages, rawResults)
@@ -275,6 +292,7 @@ class MessageHandler(
                 listOf(calls.first() to ReminderExecution(null, BotReply(renderer.choices(candidates, zone, now))))
             } else {
                 calls.mapIndexed { index, call ->
+                    budget.trace.executing(call)
                     if (call.name in TARGET_CHANGES || call.name == "create_reminder") budget.mutationStarted = true
                     val execution = executeCall(user, call, "$usageKey:tool:$index", session, question, budget, messages)
                     if (call.name == "list_reminders" &&
@@ -287,6 +305,7 @@ class MessageHandler(
             }
         val rendered =
             results.map { (call, execution) ->
+                budget.trace.mark("render")
                 render(call, execution, candidates, zone, now)
             }
         val renderedReplies = rendered.filterNotNull()

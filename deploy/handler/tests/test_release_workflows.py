@@ -5,8 +5,11 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
+import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -60,6 +63,49 @@ class WorkflowAccessTests(unittest.TestCase):
         self.assertIn('REQUEST: ${{ needs.preview.outputs.request }}', submit)
         self.assertNotIn('actions/download-artifact', submit)
         self.assertNotIn('actions/checkout', submit)
+
+
+class HostKeyDiagnosticsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.directory = Path(self.tmp.name)
+        self.key = self.directory / 'server-key'
+        subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(self.key)],
+                       check=True, capture_output=True)
+        self.public_key = self.key.with_suffix('.pub').read_text().split()
+        workflow = (ROOT / '.github/workflows/authorize.yml').read_text()
+        diagnostic = workflow.split('          echo "Стенд: $STAND"', 1)[1].split('          ssh -T', 1)[0]
+        self.script = 'set -euo pipefail\n' + textwrap.dedent(diagnostic).replace(
+            '~/.ssh', shlex.quote(str(self.directory)))
+
+    def diagnose(self, contents):
+        (self.directory / 'known_hosts').write_text(contents)
+        return subprocess.run(['bash', '-c', self.script],
+                              env=dict(os.environ, VPS_HOST='192.0.2.10'),
+                              text=True, capture_output=True)
+
+    def test_matching_host_reports_ed25519_fingerprint_without_key_contents(self):
+        result = self.diagnose(f'192.0.2.10 {self.public_key[0]} {self.public_key[1]}\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('ED25519', result.stdout)
+        self.assertNotIn(self.public_key[1], result.stdout + result.stderr)
+        self.assertNotIn(self.key.read_text(), result.stdout + result.stderr)
+
+    def test_empty_known_hosts_is_refused(self):
+        result = self.diagnose('')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('ERROR: known_hosts пуст', result.stdout)
+
+    def test_invalid_known_hosts_is_refused(self):
+        result = self.diagnose('192.0.2.10 ssh-ed25519 invalid-key\n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('ERROR: неверный формат known_hosts', result.stdout)
+
+    def test_old_ip_is_refused(self):
+        result = self.diagnose(f'192.0.2.11 {self.public_key[0]} {self.public_key[1]}\n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('ERROR: запись для VPS_HOST не найдена', result.stdout)
 
 
 class PreviewTests(unittest.TestCase):

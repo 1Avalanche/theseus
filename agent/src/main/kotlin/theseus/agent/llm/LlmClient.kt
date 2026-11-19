@@ -64,4 +64,9 @@ interface LlmClient {
 class LlmException(
     message: String,
     cause: Throwable? = null,
+    val reason: LlmFailure = LlmFailure.UNKNOWN,
+    val httpStatus: Int? = null,
 ) : RuntimeException(message, cause)
+
+/** Безопасная причина для диагностики: без тела ответа провайдера. */
+enum class LlmFailure { UNKNOWN, HTTP, INVALID_RESPONSE, EMPTY_CHOICES }
