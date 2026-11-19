@@ -63,6 +63,7 @@ jobs:
       - name: Разрешить показанный артефакт на VPS
         env:
           REQUEST: ${{ needs.preview.outputs.request }}
+          STAND: ${{ inputs.stand }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_SSH_KEY: ${{ secrets.VPS_AUTHORIZE_SSH_KEY }}
@@ -86,6 +87,21 @@ jobs:
           (ssh / 'id_authorize').write_text(os.environ['VPS_SSH_KEY'] + '\n')
           (ssh / 'known_hosts').write_text(os.environ['VPS_KNOWN_HOSTS'] + '\n')
           PY
+          echo "Стенд: $STAND"
+          test -s ~/.ssh/known_hosts || {
+            echo "ERROR: known_hosts пуст"
+            exit 1
+          }
+          ssh-keygen -lf ~/.ssh/known_hosts || {
+            echo "ERROR: неверный формат known_hosts"
+            exit 1
+          }
+          ssh-keygen -F "$VPS_HOST" -f ~/.ssh/known_hosts > ~/.ssh/host-match || {
+            echo "ERROR: запись для VPS_HOST не найдена"
+            exit 1
+          }
+          echo "Ключи, найденные для VPS_HOST:"
+          ssh-keygen -lf ~/.ssh/host-match
           ssh -T -i ~/.ssh/id_authorize -o IdentitiesOnly=yes -o BatchMode=yes \
             -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 \
             -o ServerAliveCountMax=3 "$VPS_USER@$VPS_HOST" < request.json

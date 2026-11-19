@@ -10,6 +10,7 @@ import theseus.agent.llm.ToolCall
 
 /** Общий бюджет всех ролей на входящее событие. Повтор аргументов не получает новый ключ изменения. */
 internal class TurnBudget {
+    val trace = TurnTrace()
     private var requests = 0
     private var rounds = 0
     private var calls = 0
