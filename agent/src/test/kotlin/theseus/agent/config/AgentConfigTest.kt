@@ -30,7 +30,7 @@ class AgentConfigTest {
             "THESEUS_CORE_URL" to "http://theseus-test-core:8080/",
             "THESEUS_SERVICE_TOKEN" to "s".repeat(40),
             "THESEUS_OPENROUTER_API_KEY" to "or-secret",
-            "THESEUS_LLM_MAIN_MODELS" to "anthropic/claude-haiku-5.5, google/gemini-3.1-flash-lite ,openai/gpt-5.4-nano",
+            "THESEUS_LLM_MAIN_MODELS" to "anthropic/claude-haiku-5.5, qwen/qwen3.8-flash ,google/gemini-3.1-flash-lite",
             "THESEUS_ADMIN_CHAT_ID" to "4242",
             "THESEUS_DB_URL" to "jdbc:postgresql://localhost/agent",
             "THESEUS_DB_USER" to "agent",
@@ -42,7 +42,7 @@ class AgentConfigTest {
     fun `reads models in priority order and normalizes urls`() {
         val config = AgentConfig.fromEnv(valid)
 
-        assertEquals(listOf("anthropic/claude-haiku-5.5", "google/gemini-3.1-flash-lite", "openai/gpt-5.4-nano"), config.mainModels)
+        assertEquals(listOf("anthropic/claude-haiku-5.5", "qwen/qwen3.8-flash", "google/gemini-3.1-flash-lite"), config.mainModels)
         assertEquals("http://theseus-test-core:8080", config.coreUrl)
         assertEquals("https://openrouter.ai/api/v1", config.openRouterUrl)
     }

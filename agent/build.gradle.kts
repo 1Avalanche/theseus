@@ -23,6 +23,8 @@ dependencies {
 
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.ktor.client.mock)
+    // Eval использует настоящий домен core только в тестовом classpath.
+    testImplementation(project(":core"))
 }
 
 testing {
@@ -44,3 +46,12 @@ testing {
     }
 }
 tasks.check { dependsOn(testing.suites.named("integrationTest")) }
+
+// Платный прогон запускается явно; build только компилирует раннер и проверяет его фейками.
+tasks.register<JavaExec>("eval") {
+    group = "verification"
+    description = "Eval: validate, smoke, run или report; без аргументов — локальная валидация"
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass = "theseus.agent.eval.EvalMainKt"
+    workingDir = rootProject.projectDir
+}

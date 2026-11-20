@@ -1,0 +1,9 @@
+{
+  "models": [
+    "anthropic/claude-haiku-5.5",
+    "qwen/qwen3.8-flash",
+    "google/gemini-3.1-flash-lite"
+  ],
+  "budget_usd": "5.00",
+  "smoke_cases": ["once-01", "list-02", "upd-02", "clar-02", "dialog-persona-02"]
+}

@@ -22,12 +22,14 @@ class PersonaAnswersTest {
         }
     }
 
-    @Test fun `natural admission and expedition phrasing are kept unchanged`() {
-        for (text in listOf("Не знаю, почему меня так назвали.", "Я летал на «Тесее». Не люблю об этом говорить.")) {
+    @Test fun `natural admission and current persona phrasing are kept unchanged`() {
+        for (text in listOf("Не знаю, почему меня так назвали.", "Я Сири Китон, ИИ-ассистент в Telegram.")) {
             assertEquals(text, answers.render(ChatMessage(Role.ASSISTANT, text)))
         }
         val prompt = Texts.resourceText("prompts/persona-answer.md")
-        assertTrue(prompt.contains("Не выдумывай, кто дал имя"))
-        assertTrue(Texts.resourceText("persona/siri-facts.md").contains("не люблю говорить"))
+        assertTrue(prompt.contains("Единственный источник фактов — карточка ниже"))
+        assertTrue(prompt.contains("Никаких знаний о книге вне карточки"))
+        assertTrue(prompt.contains("Неизвестное признавай от первого лица: «Не знаю»"))
+        assertTrue(Texts.resourceText("persona/siri-facts.md").contains("Сири Китон — синтет, ИИ-ассистент в Telegram"))
     }
 }
