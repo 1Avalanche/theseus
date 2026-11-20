@@ -45,7 +45,7 @@
 | `theseus.serialization` | плагин компилятора kotlinx.serialization (виден модулям только через build-logic) |
 
 - Пакеты: `theseus.<модуль>…`, group `theseus`.
-- Версия приложения задана `theseusVersion` в `gradle.properties`; convention-плагин включает её в ресурс обоих дистрибутивов. `/version` читает ресурс запущенного agent; значение для новых сборок — `1.0.0`.
+- Версия приложения задана `theseusVersion` в `gradle.properties`; convention-плагин включает её в ресурс обоих дистрибутивов. `/version` читает ресурс запущенного agent; значение для новых сборок — `1.0.1`.
 - Включены Gradle build cache, configuration cache и параллельная сборка (`gradle.properties`).
 
 ### Новый модуль

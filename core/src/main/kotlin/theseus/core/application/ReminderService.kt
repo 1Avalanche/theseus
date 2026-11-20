@@ -292,7 +292,18 @@ class ReminderService(
                     )
                 }
             }
-            val resolved = at?.let { resolver.resolve(it, now, old.timezone) }
+            val resolved =
+                at?.let {
+                    // В отличие от создания, смена только часа сохраняет день существующего напоминания.
+                    val hasTime = it.time != null || it.partOfDay != null
+                    val dated =
+                        if (it.date == null && it.after == null && hasTime) {
+                            it.copy(date = old.startLocal.toLocalDate())
+                        } else {
+                            it
+                        }
+                    resolver.resolve(dated, now, old.timezone)
+                }
             var changed =
                 old.copy(
                     text = text?.let(::normalizeText) ?: old.text,

@@ -18,8 +18,55 @@ import theseus.agent.llm.ToolCall
 import java.math.BigDecimal
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.LocalDateTime
 
 class EvalRunnerTest {
+    @Test fun `reply changing only time preserves original date through agent and real core`() =
+        runBlocking {
+            val case =
+                objectJson(
+                    """{"id":"reply-date-regression","input":"измени время на 16.00",
+                "context":{"now_local":"2026-11-20T21:00"},
+                "reply_to":{"source":"agent_reply","reminder_id":1,"kind":"one_time","timezone":"Europe/Moscow"},
+                "history":[{"role":"user","content":"напомни 30 ноября написать Вадиму про перенос приема в больнице"},
+                {"role":"assistant","content":"Поставил: «написать Вадиму про перенос приема в больнице» — 30 ноября в 09:00."}],
+                "expect":{"calls":[]}}""",
+                )
+            val harness = EvalHarness(data(), case)
+            val created =
+                harness.core.callTool(
+                    1,
+                    "create_reminder",
+                    objectJson("""{"text":"написать Вадиму про перенос приема в больнице","when":{"date":"2026-11-30"}}"""),
+                )
+            assertFalse(created.isError, created.text)
+            val llm =
+                object : LlmClient {
+                    override suspend fun complete(request: LlmRequest): LlmResponse {
+                        assertTrue(
+                            request.messages
+                                .last()
+                                .content!!
+                                .contains("\"reminder_id\":1"),
+                        )
+                        return LlmResponse(
+                            ChatMessage(
+                                Role.ASSISTANT,
+                                null,
+                                listOf(ToolCall("update", "update_reminder", """{"reminder_id":1,"when":{"time":"16:00"}}""")),
+                            ),
+                            "fake",
+                            null,
+                        )
+                    }
+                }
+            val reply = requireNotNull(harness.run(llm))
+            assertTrue(reply.text.contains("30 ноября в 16:00"), reply.text)
+            assertFalse(reply.text.contains("завтра"), reply.text)
+            assertEquals(1, harness.state.size)
+            assertEquals(LocalDateTime.of(2026, 11, 30, 16, 0), harness.state.getValue(1).startLocal)
+        }
+
     @Test fun `text pricing reserves cache and rejects unknown charges`() {
         val rates = textPrice(objectJson("""{"prompt":"0.1","completion":"0.5","input_cache_write":"0.2","web_search":"10"}"""))
         assertEquals(0, rates.first.compareTo(BigDecimal("0.3")))

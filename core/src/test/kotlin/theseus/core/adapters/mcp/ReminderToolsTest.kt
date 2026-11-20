@@ -24,6 +24,26 @@ import java.time.LocalTime
 
 class ReminderToolsTest {
     @Test
+    fun `time only patch preserves dated one time reminder in tool result and list`() =
+        runTest {
+            tools.createReminder(1, args("""{"text":"Написать Вадиму","when":{"date":"2026-11-30"}}"""))
+            val result = change("""{"reminder_id":1,"when":{"time":"16:00"}}""")
+            assertFalse(result.isError, result.json)
+            val reminder = args(result.json).getValue("reminder").jsonObject
+            assertEquals("2026-11-30T16:00", reminder.getValue("next_at_local").jsonPrimitive.content)
+            assertEquals(
+                "2026-11-30T16:00",
+                reminder
+                    .getValue("schedule")
+                    .jsonObject
+                    .getValue("at_local")
+                    .jsonPrimitive.content,
+            )
+            val list = tools.call("list_reminders", 1, args("""{"from":"2026-11-30","to":"2026-11-30"}"""), null)
+            assertTrue(list.json.contains("2026-11-30T16:00"), list.json)
+        }
+
+    @Test
     fun `invalid clock time is specific for one time recurrence and occurrence and preserves target`() =
         runTest {
             for (time in listOf("25:00", "15:75", "15 вечера")) {
