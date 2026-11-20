@@ -35,6 +35,7 @@ class OpenRouterClient(
     private val clock: Clock = Clock.systemUTC(),
     private val summaryModels: List<String> = models,
     private val contextTokens: Int = 18000,
+    private val maxPrice: JsonObject? = null,
 ) : LlmClient {
     override suspend fun complete(request: LlmRequest): LlmResponse {
         checkBudget(request)
@@ -92,7 +93,7 @@ class OpenRouterClient(
             maxTokens = request.maxOutputTokens,
             messages = request.messages.map(::toWire),
             tools = request.tools.map { WireTool(function = WireFunction(it.name, it.description, it.parameters)) }.ifEmpty { null },
-            provider = WireProvider(dataCollection = "deny"),
+            provider = WireProvider(dataCollection = "deny", maxPrice = maxPrice),
             usage = WireUsageRequest(include = true),
         )
 
@@ -164,6 +165,7 @@ internal data class WireRequest(
 @Serializable
 internal data class WireProvider(
     @SerialName("data_collection") val dataCollection: String,
+    @SerialName("max_price") val maxPrice: JsonObject? = null,
 )
 
 @Serializable

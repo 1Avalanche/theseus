@@ -2,7 +2,7 @@
 
 Telegram-бот (long polling) и LLM-пайплайн через OpenRouter. Архитектура — `docs/architecture.md`, решения — `docs/DECISIONS.md` (разделы 2, 6, 8, 9).
 
-**Статус:** этап 5 дорабатывается после ручной проверки владельцем `0.5.2` на test-боте. Gradle-модуль `:agent`, плагины `theseus.application` + `theseus.serialization`, точка входа `theseus.agent.MainKt`. Проверки и их границы — `docs/roadmap.md`.
+**Статус:** этап 5 завершён по решению владельца; этап 6 в работе. Gradle-модуль `:agent`, плагины `theseus.application` + `theseus.serialization`, точка входа `theseus.agent.MainKt`. Проверки и их границы — `docs/roadmap.md`.
 
 ## Пакеты `theseus.agent`
 
@@ -21,6 +21,8 @@ Telegram-бот (long polling) и LLM-пайплайн через OpenRouter. А
 | `texts` | загрузка `texts/agent.properties` |
 
 JSON-кодек `OpenRouterClient` использует `encodeDefaults = true`: обязательное протокольное поле `type: "function"` сохраняется в описаниях `tools` и истории `tool_calls`, даже когда это значение по умолчанию Kotlin-модели. HTTP-регрессии на Ktor `MockEngine` проверяют фактически сериализованное тело исходящего запроса для обоих случаев, включая связь `tool_call_id`. Это проверка границы HTTP-клиента без обращения к реальному OpenRouter. Схема инструментов MCP отдельно сериализуется SDK с обязательным `type: "object"`; обнаруженный дефект касается исходящего JSON OpenRouter.
+
+`OpenRouterClient` принимает необязательный `maxPrice` и передаёт его как `provider.max_price`. По умолчанию ограничение не задано; production его не передаёт. Eval-раннер задаёт пределы `prompt` и `completion` на миллион токенов и `request = 0` по тарифам каталога; общий контроль бюджета прогона описан в `docs/eval.md`.
 
 Снимок `/tmp/theseus-agent.monitor.json` обновляется каждые 30 секунд и не содержит тексты сообщений. Успешный пустой ответ `getUpdates` тоже обновляет пульс; отсутствие пользовательских сообщений не считается отказом. Инструкция по мониторингу — [monitoring.md](../monitoring.md).
 
@@ -111,4 +113,4 @@ JSON-кодек `OpenRouterClient` использует `encodeDefaults = true`:
 
 ## Eval-набор
 
-Каталог `agent/eval/`: `reminders.jsonl`, `stage4-feedback.jsonl` и `stage5-feedback.jsonl` (кейсы), `fixtures.json` (контекст и напоминания). Формат и правила сравнения — `docs/eval.md`. В `./gradlew build` не входит; раннер и прогон на реальных моделях — этап 6.
+Каталог `agent/eval/`: `reminders.jsonl`, `stage4-feedback.jsonl` и `stage5-feedback.jsonl` (кейсы), `fixtures.json` (контекст и напоминания). Формат, раннер и правила сравнения — `docs/eval.md`. `./gradlew build` проверяет раннер с фейками; базовый платный прогон принят с ограничениями, расширенный eval отложен. Приоритет моделей — Haiku → Qwen → Gemini; GPT исключена из дальнейшего fallback.

@@ -52,3 +52,6 @@ __pycache__/
 .env.*
 *.env
 !*.env.example
+
+### Локальные трассы и бюджет LLM-eval ###
+/agent/eval/results/
